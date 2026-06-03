@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteTargetsManager">
+    <targets>
+      <target name="WSL - Ubuntu-22.04" type="wsl" uuid="2c0b4327-8244-45f7-ade2-5a85e330cef2">
+        <config>
+          <option name="distributionMsId" value="Ubuntu-22.04" />
+          <option name="projectRootOnTarget" value="{exitCode=0, timeout=false, cancelled=false, stdout=/tmp/tmp.FmGhsy6XFE&#13;&#10;, stderr=}/nli-server" />
+        </config>
+        <ContributedStateBase type="RsLanguageRuntime">
+          <config>
+            <option name="cargoPath" value="/home/muyu/.cargo/bin/cargo" />
+            <option name="cargoVersion" value="1.94.0 (85eff7c80 2026-01-15)" />
+            <option name="rustcPath" value="/home/muyu/.cargo/bin/rustc" />
+            <option name="rustcVersion" value="1.94.0 (4a4ef493e 2026-03-02)" />
+          </config>
+        </ContributedStateBase>
+      </target>
+    </targets>
+  </component>
+</project>
