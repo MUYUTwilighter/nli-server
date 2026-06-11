@@ -127,4 +127,46 @@ mod tests {
             Err(SignalingLimitError::UnknownPeer)
         );
     }
+
+    #[test]
+    fn enforces_one_offer() {
+        let mut session = session();
+        assert!(session.register_offer().is_ok());
+        assert_eq!(
+            session.register_offer(),
+            Err(SignalingLimitError::OfferAlreadySent)
+        );
+    }
+
+    #[test]
+    fn counts_ice_candidates_per_peer() {
+        let mut session = session();
+        for _ in 0..MAX_ICE_CANDIDATES_PER_SIDE {
+            session.register_ice_candidate("initiator").unwrap();
+        }
+        assert_eq!(
+            session.initiator_ice_candidates,
+            MAX_ICE_CANDIDATES_PER_SIDE
+        );
+        assert_eq!(session.target_ice_candidates, 0);
+        assert_eq!(
+            session.register_ice_candidate("initiator"),
+            Err(SignalingLimitError::TooManyIceCandidates)
+        );
+        assert!(session.register_ice_candidate("target").is_ok());
+        assert_eq!(session.target_ice_candidates, 1);
+    }
+
+    #[test]
+    fn signaling_session_round_trips_through_json() {
+        let session = session();
+        let value = serde_json::to_value(&session).unwrap();
+
+        assert!(value.get("sessionId").is_some());
+        assert!(value.get("offerSent").is_some());
+        assert_eq!(
+            serde_json::from_value::<SignalingSession>(value).unwrap(),
+            session
+        );
+    }
 }

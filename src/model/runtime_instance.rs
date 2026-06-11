@@ -18,3 +18,46 @@ impl RuntimeInstance {
         self.expires_at <= now
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_is_inclusive() {
+        let now = Utc::now();
+        let instance = RuntimeInstance {
+            profile_id: Uuid::new_v4(),
+            presence_id: "presence".to_owned(),
+            pmid: None,
+            instance_started_at: now,
+            issued_at: now,
+            expires_at: now + chrono::Duration::seconds(30),
+        };
+
+        assert!(!instance.is_expired_at(now));
+        assert!(instance.is_expired_at(instance.expires_at));
+        assert!(instance.is_expired_at(instance.expires_at + chrono::Duration::milliseconds(1)));
+    }
+
+    #[test]
+    fn runtime_instance_round_trips_through_json() {
+        let now = Utc::now();
+        let instance = RuntimeInstance {
+            profile_id: Uuid::new_v4(),
+            presence_id: "presence".to_owned(),
+            pmid: Some("pmid".to_owned()),
+            instance_started_at: now,
+            issued_at: now,
+            expires_at: now,
+        };
+        let value = serde_json::to_value(&instance).unwrap();
+
+        assert!(value.get("profileId").is_some());
+        assert!(value.get("instanceStartedAt").is_some());
+        assert_eq!(
+            serde_json::from_value::<RuntimeInstance>(value).unwrap(),
+            instance
+        );
+    }
+}

@@ -100,4 +100,37 @@ mod tests {
         let profile_id = Uuid::new_v4();
         assert_eq!(normalize_friend_pair(profile_id, profile_id), None);
     }
+
+    #[test]
+    fn friend_source_uses_stable_storage_and_json_values() {
+        for (source, value) in [
+            (FriendSource::Netherlink, "netherlink"),
+            (FriendSource::MinecraftImport, "minecraft_import"),
+            (FriendSource::MinecraftSync, "minecraft_sync"),
+        ] {
+            assert_eq!(source.as_str(), value);
+            assert_eq!(source.to_string(), value);
+            assert_eq!(FriendSource::from_str(value).unwrap(), source);
+            assert_eq!(
+                serde_json::to_string(&source).unwrap(),
+                format!("\"{value}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<FriendSource>(&format!("\"{value}\"")).unwrap(),
+                source
+            );
+        }
+        assert!(FriendSource::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn friend_snapshot_serializes_api_field_names() {
+        let snapshot = FriendSnapshot::default();
+        let value = serde_json::to_value(snapshot).unwrap();
+
+        assert!(value.get("friends").is_some());
+        assert!(value.get("incomingRequests").is_some());
+        assert!(value.get("outgoingRequests").is_some());
+        assert!(value.get("incoming_requests").is_none());
+    }
 }

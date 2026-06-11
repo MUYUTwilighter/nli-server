@@ -56,4 +56,46 @@ mod tests {
         presence.status = PresenceStatus::Hosting;
         assert!(presence.is_joinable());
     }
+
+    #[test]
+    fn presence_status_uses_wire_protocol_values() {
+        for (status, value) in [
+            (PresenceStatus::Offline, "OFFLINE"),
+            (PresenceStatus::Online, "ONLINE"),
+            (PresenceStatus::InGame, "IN_GAME"),
+            (PresenceStatus::Hosting, "HOSTING"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{value}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<PresenceStatus>(&format!("\"{value}\"")).unwrap(),
+                status
+            );
+        }
+    }
+
+    #[test]
+    fn presence_round_trip_preserves_camel_case_fields() {
+        let now = Utc::now();
+        let presence = Presence {
+            profile_id: Uuid::new_v4(),
+            presence_id: "presence-id".to_owned(),
+            pmid: Some("pmid".to_owned()),
+            status: PresenceStatus::Hosting,
+            joinable: true,
+            session_id: Some("session-id".to_owned()),
+            endpoint: None,
+            display_text: "Test world".to_owned(),
+            updated_at: now,
+            expires_at: now,
+        };
+        let value = serde_json::to_value(&presence).unwrap();
+
+        assert_eq!(value["profileId"], presence.profile_id.to_string());
+        assert_eq!(value["presenceId"], "presence-id");
+        assert_eq!(value["displayText"], "Test world");
+        assert_eq!(serde_json::from_value::<Presence>(value).unwrap(), presence);
+    }
 }
