@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::time::Duration;
 
+pub mod friends;
+
 pub type DbPool = PgPool;
 
 pub async fn connect(database_url: &str) -> Result<DbPool> {
@@ -17,6 +19,11 @@ pub async fn connect(database_url: &str) -> Result<DbPool> {
         .execute(&pool)
         .await
         .context("failed to verify PostgreSQL connection")?;
+
+    sqlx::migrate!()
+        .run(&pool)
+        .await
+        .context("failed to run PostgreSQL migrations")?;
 
     Ok(pool)
 }

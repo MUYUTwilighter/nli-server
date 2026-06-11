@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub redis_url: String,
     pub instance_token_ttl: Duration,
     pub presence_ttl: Duration,
+    pub signaling_session_ttl: Duration,
 }
 
 impl AppConfig {
@@ -24,6 +25,7 @@ impl AppConfig {
             redis_url: required_var("REDIS_URL")?,
             instance_token_ttl: seconds_var("INSTANCE_TOKEN_TTL_SECONDS", 1_800)?,
             presence_ttl: seconds_var("PRESENCE_TTL_SECONDS", 90)?,
+            signaling_session_ttl: seconds_var("SIGNALING_SESSION_TTL_SECONDS", 300)?,
         })
     }
 }

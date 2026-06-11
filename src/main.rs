@@ -1,7 +1,5 @@
-mod config;
-
 use anyhow::Result;
-use nli_server::{config::AppConfig, db};
+use nli_server::{config::AppConfig, db, redis::RedisStore};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -12,11 +10,12 @@ async fn main() -> Result<()> {
 
     let config = AppConfig::from_env()?;
     let _db_pool = db::connect(&config.database_url).await?;
+    let _redis = RedisStore::connect(&config.redis_url).await?;
 
     info!(
         env = %config.env,
         bind_addr = %config.bind_addr,
-        "database connection established"
+        "PostgreSQL and Redis connections established"
     );
 
     Ok(())
