@@ -85,7 +85,7 @@ used, store only a hash of the token in Redis, never the raw token.
 Suggested Redis key:
 
 ```text
-presence:{presence_id}
+nli:presence:{presence_id}
 ```
 
 The value can be JSON. Set the Redis key TTL to the Presence expiry. A secondary in-memory/Redis index may map
@@ -127,3 +127,47 @@ Recommended limits:
 - Trim leading and trailing whitespace.
 - Reject or replace control characters.
 - If missing or blank, the server may use a generic fallback such as `Minecraft Java instance`.
+
+## Redis Runtime Models
+
+All Redis data is volatile and must have a TTL. Keys use the `nli:` namespace.
+
+Runtime instances are addressed only by a hash of the private bearer token:
+
+```text
+nli:instance:{token_hash} -> RuntimeInstance JSON
+nli:presence-instance:{presence_id} -> token_hash
+```
+
+`RuntimeInstance` contains `profile_id`, `presence_id`, optional `pmid`, start time, issue time, and expiry time. The raw
+instance token must never be stored. Rotating a token replaces the reverse mapping and deletes the previous token hash
+entry.
+
+Presence records and their per-account multi-instance index use:
+
+```text
+nli:presence:{presence_id} -> Presence JSON
+nli:profile-presences:{profile_id} -> sorted set of presence_id by expiry timestamp
+```
+
+The Redis repository assigns `updated_at` and `expires_at` when Presence is written. Expired sorted-set entries are
+removed when the account Presence list is queried.
+
+WebRTC signaling session state uses:
+
+```text
+nli:signaling-session:{session_id} -> SignalingSession JSON
+```
+
+The model binds both profile and Presence identities, tracks whether the offer and answer were sent, and counts ICE
+candidates independently for each side. Initial session TTL is 5 minutes.
+
+Other short-lived controls use:
+
+```text
+nli:nonce:{namespace}:{nonce_hash}
+nli:rate-limit:{bucket}
+```
+
+Nonces are consumed atomically with `GETDEL`. Rate-limit counters use an atomic Redis script so the first increment and
+window expiry are installed together.

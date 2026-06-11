@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::model::{
     presence::Presence, runtime_instance::RuntimeInstance, signaling::SignalingSession,
+    token::RuntimeTokenHash,
 };
 
 const KEY_PREFIX: &str = "nli";
@@ -33,7 +34,7 @@ impl RedisStore {
 
     pub async fn put_runtime_instance(
         &self,
-        token_hash: &str,
+        token_hash: &RuntimeTokenHash,
         instance: &RuntimeInstance,
         ttl: Duration,
     ) -> Result<()> {
@@ -43,7 +44,7 @@ impl RedisStore {
         let previous_hash: Option<String> = connection.get(&reverse_key).await?;
 
         if let Some(previous_hash) = previous_hash
-            && previous_hash != token_hash
+            && previous_hash != token_hash.as_str()
         {
             let _: usize = connection.del(instance_key(&previous_hash)).await?;
         }
@@ -52,19 +53,22 @@ impl RedisStore {
         let mut pipeline = redis::pipe();
         pipeline
             .atomic()
-            .set_ex(instance_key(token_hash), payload, ttl.as_secs())
+            .set_ex(instance_key(token_hash.as_str()), payload, ttl.as_secs())
             .ignore()
-            .set_ex(reverse_key, token_hash, ttl.as_secs())
+            .set_ex(reverse_key, token_hash.as_str(), ttl.as_secs())
             .ignore();
         pipeline.query_async::<()>(&mut connection).await?;
         Ok(())
     }
 
-    pub async fn runtime_instance(&self, token_hash: &str) -> Result<Option<RuntimeInstance>> {
-        self.get_json(&instance_key(token_hash)).await
+    pub async fn runtime_instance(
+        &self,
+        token_hash: &RuntimeTokenHash,
+    ) -> Result<Option<RuntimeInstance>> {
+        self.get_json(&instance_key(token_hash.as_str())).await
     }
 
-    pub async fn delete_runtime_instance(&self, token_hash: &str) -> Result<bool> {
+    pub async fn delete_runtime_instance(&self, token_hash: &RuntimeTokenHash) -> Result<bool> {
         let Some(instance) = self.runtime_instance(token_hash).await? else {
             return Ok(false);
         };
@@ -72,7 +76,7 @@ impl RedisStore {
         let mut pipeline = redis::pipe();
         pipeline
             .atomic()
-            .del(instance_key(token_hash))
+            .del(instance_key(token_hash.as_str()))
             .ignore()
             .del(presence_instance_key(&instance.presence_id))
             .ignore();
@@ -195,13 +199,20 @@ impl RedisStore {
         ensure_ttl(window)?;
         let key = rate_limit_key(bucket);
         let mut connection = self.connection.clone();
-        let count: u64 = connection.incr(&key, 1_u64).await?;
-        if count == 1 {
-            let _: bool = connection
-                .expire(key, seconds_as_i64(window.as_secs())?)
-                .await?;
-        }
-        Ok(count)
+        let script = redis::Script::new(
+            r#"
+            local count = redis.call('INCR', KEYS[1])
+            if count == 1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            return count
+            "#,
+        );
+        Ok(script
+            .key(key)
+            .arg(seconds_as_i64(window.as_secs())?)
+            .invoke_async::<u64>(&mut connection)
+            .await?)
     }
 
     async fn set_json<T: Serialize>(&self, key: &str, value: &T, ttl: Duration) -> Result<()> {
