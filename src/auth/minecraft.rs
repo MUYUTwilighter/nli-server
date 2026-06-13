@@ -17,6 +17,12 @@ pub struct MinecraftProfileClient {
     profile_by_id_base_url: Url,
 }
 
+#[derive(Clone)]
+pub struct MinecraftSocialClient {
+    http: Client,
+    friends_url: Url,
+}
+
 impl MinecraftProfileClient {
     pub fn new(http: Client, profile_by_name_base_url: Url, profile_by_id_base_url: Url) -> Self {
         Self {
@@ -113,6 +119,81 @@ impl MinecraftAuthClient {
     }
 }
 
+impl MinecraftSocialClient {
+    pub fn new(http: Client, friends_url: Url) -> Self {
+        Self { http, friends_url }
+    }
+
+    pub async fn friends(
+        &self,
+        access_token: &SecretString,
+    ) -> Result<OfficialFriendSnapshot, MinecraftSocialError> {
+        let response = self
+            .http
+            .get(self.friends_url.clone())
+            .bearer_auth(access_token.expose_secret())
+            .send()
+            .await
+            .map_err(MinecraftSocialError::Request)?;
+        match response.status() {
+            StatusCode::OK => response
+                .json::<OfficialFriendSnapshot>()
+                .await
+                .map_err(MinecraftSocialError::InvalidResponse),
+            status if status.is_client_error() => Err(MinecraftSocialError::InvalidToken),
+            status => Err(MinecraftSocialError::UpstreamStatus(status)),
+        }
+    }
+
+    pub async fn remove_friend(
+        &self,
+        access_token: &SecretString,
+        profile_id: Uuid,
+    ) -> Result<(), MinecraftSocialError> {
+        let response = self
+            .http
+            .put(self.friends_url.clone())
+            .bearer_auth(access_token.expose_secret())
+            .json(&OfficialFriendUpdate {
+                profile_id,
+                update_type: "REMOVE",
+            })
+            .send()
+            .await
+            .map_err(MinecraftSocialError::Request)?;
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            status if status.is_client_error() => Err(MinecraftSocialError::InvalidToken),
+            status => Err(MinecraftSocialError::UpstreamStatus(status)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OfficialFriendSnapshot {
+    #[serde(default)]
+    pub friends: Vec<OfficialFriend>,
+    #[serde(default)]
+    pub incoming_requests: Vec<OfficialFriend>,
+    #[serde(default)]
+    pub outgoing_requests: Vec<OfficialFriend>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OfficialFriend {
+    pub profile_id: Uuid,
+    pub name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficialFriendUpdate {
+    profile_id: Uuid,
+    update_type: &'static str,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileIdentity {
@@ -154,6 +235,18 @@ pub enum MinecraftProfileError {
     InvalidResponse(#[source] reqwest::Error),
     #[error("Minecraft profile service returned an invalid profile id")]
     InvalidProfileId(String),
+}
+
+#[derive(Debug, Error)]
+pub enum MinecraftSocialError {
+    #[error("Minecraft access token is invalid")]
+    InvalidToken,
+    #[error("Minecraft social request failed")]
+    Request(#[source] reqwest::Error),
+    #[error("Minecraft social service returned {0}")]
+    UpstreamStatus(StatusCode),
+    #[error("Minecraft social service returned an invalid response")]
+    InvalidResponse(#[source] reqwest::Error),
 }
 
 #[cfg(test)]
@@ -214,6 +307,48 @@ mod tests {
             .verify(&SecretString::from("invalid".to_owned()))
             .await;
         assert!(matches!(result, Err(MinecraftAuthError::InvalidToken)));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn reads_and_updates_official_friends() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let friend_id = Uuid::new_v4();
+        let expected_id = friend_id;
+        let app = Router::new().route(
+            "/friends",
+            get(move |headers: HeaderMap| async move {
+                assert_eq!(
+                    headers.get("authorization").unwrap(),
+                    "Bearer minecraft-token"
+                );
+                Json(json!({
+                    "friends": [{ "profileId": expected_id, "name": "Friend" }],
+                    "incomingRequests": [],
+                    "outgoingRequests": []
+                }))
+            })
+            .put(
+                |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        headers.get("authorization").unwrap(),
+                        "Bearer minecraft-token"
+                    );
+                    assert_eq!(body["updateType"], "REMOVE");
+                    StatusCode::OK
+                },
+            ),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let client = MinecraftSocialClient::new(
+            Client::new(),
+            format!("http://{address}/friends").parse().unwrap(),
+        );
+        let token = SecretString::from("minecraft-token".to_owned());
+        let snapshot = client.friends(&token).await.unwrap();
+        assert_eq!(snapshot.friends[0].profile_id, friend_id);
+        client.remove_friend(&token, friend_id).await.unwrap();
         server.abort();
     }
 }

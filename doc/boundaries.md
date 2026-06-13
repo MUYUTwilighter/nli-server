@@ -4,8 +4,10 @@ The backend must not persist login state.
 
 The backend must not persist Microsoft or Minecraft access tokens.
 
-The backend verifies a Minecraft access token only during runtime instance registration and must discard it immediately
-after validation. Subsequent HTTP and WebSocket operations use the short-lived runtime instance token.
+The backend normally verifies a Minecraft access token only during runtime instance registration and must discard it
+immediately after validation. The one explicit exception is best-effort official friend deletion: the client may attach
+`X-Minecraft-Access-Token` to that single request. The backend verifies that it belongs to the same profile as the
+runtime instance, calls the official API, and discards it immediately. It is never stored or logged.
 
 Persistent storage is limited to:
 

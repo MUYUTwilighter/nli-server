@@ -78,6 +78,8 @@ async fn serve_socket(
         }
     };
     let connection_id = registered.id;
+    metrics::gauge!("nli_websocket_connections").increment(1.0);
+    let _connection_metric = WebSocketMetricGuard;
     let mut outgoing = registered.receiver;
     let (mut sender, mut receiver) = socket.split();
     let mut heartbeat = interval(HEARTBEAT_INTERVAL);
@@ -179,6 +181,14 @@ async fn serve_socket(
         presence_id = %instance.presence_id,
         "signaling WebSocket disconnected"
     );
+}
+
+struct WebSocketMetricGuard;
+
+impl Drop for WebSocketMetricGuard {
+    fn drop(&mut self) {
+        metrics::gauge!("nli_websocket_connections").decrement(1.0);
+    }
 }
 
 async fn instance_token_is_current(

@@ -1,4 +1,11 @@
-use std::{env, time::Duration};
+use std::{
+    env,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::Result;
 use axum::{Json, Router, extract::Path, http::HeaderMap, routing::get};
@@ -21,6 +28,8 @@ async fn friend_api_lifecycle() -> Result<()> {
     dotenvy::dotenv().ok();
     let player_a = Uuid::new_v4();
     let player_b = Uuid::new_v4();
+    let official_removals = Arc::new(AtomicUsize::new(0));
+    let official_removals_server = official_removals.clone();
     let minecraft_listener = TcpListener::bind("127.0.0.1:0").await?;
     let minecraft_address = minecraft_listener.local_addr()?;
     let minecraft_server = tokio::spawn(async move {
@@ -59,6 +68,25 @@ async fn friend_api_lifecycle() -> Result<()> {
                         Json(json!({ "error": "not found" }))
                     }
                 }),
+            )
+            .route(
+                "/friends",
+                get(|| async {
+                    Json(json!({ "friends": [], "incomingRequests": [], "outgoingRequests": [] }))
+                })
+                .put(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let official_removals = official_removals_server.clone();
+                    async move {
+                        assert_eq!(
+                            headers.get("authorization").unwrap(),
+                            "Bearer player-a-token"
+                        );
+                        assert_eq!(body["profileId"], player_b.to_string());
+                        assert_eq!(body["updateType"], "REMOVE");
+                        official_removals.fetch_add(1, Ordering::SeqCst);
+                        reqwest::StatusCode::OK
+                    }
+                }),
             );
         axum::serve(minecraft_listener, app).await
     });
@@ -70,6 +98,7 @@ async fn friend_api_lifecycle() -> Result<()> {
         format!("http://{minecraft_address}/profiles/by-name/").parse()?;
     config.minecraft_profile_by_id_url =
         format!("http://{minecraft_address}/profiles/by-id/").parse()?;
+    config.minecraft_friends_url = format!("http://{minecraft_address}/friends").parse()?;
     let database = db::connect(&env::var("DATABASE_URL")?).await?;
     cleanup_profiles(&database, &[player_a, player_b]).await?;
     let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
@@ -182,9 +211,11 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .delete(format!("http://{address}/v1/friends/{player_b}"))
         .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(official_removals.load(Ordering::SeqCst), 1);
 
     let response = client
         .post(format!("http://{address}/v1/friends/requests"))

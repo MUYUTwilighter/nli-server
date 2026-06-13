@@ -6,6 +6,7 @@ use thiserror::Error;
 
 pub use minecraft::{
     MinecraftAuthClient, MinecraftAuthError, MinecraftProfileClient, MinecraftProfileError,
+    MinecraftSocialClient, MinecraftSocialError, OfficialFriend, OfficialFriendSnapshot,
     ProfileIdentity,
 };
 

@@ -74,6 +74,7 @@ async fn enforce_rate_limit(state: &AppState, instance: &RuntimeInstance) -> Res
     if profile_count > TURN_REQUESTS_PER_MINUTE_PER_PROFILE
         || instance_count > TURN_REQUESTS_PER_MINUTE_PER_INSTANCE
     {
+        metrics::counter!("nli_rate_limited_total", "endpoint" => "turn_credentials").increment(1);
         return Err(ApiError::rate_limited(
             "TURN credential request rate limit exceeded",
         ));

@@ -21,10 +21,17 @@ async fn friend_repository_lifecycle() -> Result<()> {
     let target = Uuid::new_v4();
     let explicit_requester = Uuid::new_v4();
     let explicit_target = Uuid::new_v4();
+    let imported = Uuid::new_v4();
 
     cleanup_profiles(
         &pool,
-        &[requester, target, explicit_requester, explicit_target],
+        &[
+            requester,
+            target,
+            explicit_requester,
+            explicit_target,
+            imported,
+        ],
     )
     .await?;
 
@@ -64,6 +71,18 @@ async fn friend_repository_lifecycle() -> Result<()> {
     );
     assert!(repository.remove_friend(target, requester).await?);
     assert!(!repository.are_friends(requester, target).await?);
+
+    assert_eq!(
+        repository
+            .import_official_friends(requester, &[imported, requester])
+            .await?,
+        1
+    );
+    let imported_snapshot = repository.snapshot(requester).await?;
+    assert!(imported_snapshot.friends.iter().any(|friendship| {
+        friendship.source == FriendSource::MinecraftImport
+            && (friendship.profile_low == imported || friendship.profile_high == imported)
+    }));
 
     assert_eq!(
         repository
@@ -120,7 +139,13 @@ async fn friend_repository_lifecycle() -> Result<()> {
 
     cleanup_profiles(
         &pool,
-        &[requester, target, explicit_requester, explicit_target],
+        &[
+            requester,
+            target,
+            explicit_requester,
+            explicit_target,
+            imported,
+        ],
     )
     .await?;
     Ok(())

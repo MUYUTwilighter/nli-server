@@ -425,11 +425,51 @@ impl RedisStore {
             .await?)
     }
 
+    pub async fn cache_profile(&self, profile_id: Uuid, name: &str, ttl: Duration) -> Result<()> {
+        ensure_ttl(ttl)?;
+        let profile = CachedProfile {
+            profile_id,
+            name: name.to_owned(),
+        };
+        let payload = serialize(&profile)?;
+        let mut connection = self.connection.clone();
+        let mut pipeline = redis::pipe();
+        pipeline
+            .atomic()
+            .set_ex(profile_by_id_key(profile_id), &payload, ttl.as_secs())
+            .ignore()
+            .set_ex(profile_by_name_key(name), payload, ttl.as_secs())
+            .ignore();
+        pipeline.query_async::<()>(&mut connection).await?;
+        Ok(())
+    }
+
+    pub async fn cached_profile_by_id(&self, profile_id: Uuid) -> Result<Option<(Uuid, String)>> {
+        Ok(self
+            .get_json::<CachedProfile>(&profile_by_id_key(profile_id))
+            .await?
+            .map(|profile| (profile.profile_id, profile.name)))
+    }
+
+    pub async fn cached_profile_by_name(&self, name: &str) -> Result<Option<(Uuid, String)>> {
+        Ok(self
+            .get_json::<CachedProfile>(&profile_by_name_key(name))
+            .await?
+            .map(|profile| (profile.profile_id, profile.name)))
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
         let mut connection = self.connection.clone();
         let payload: Option<String> = connection.get(key).await?;
         payload.map(|payload| deserialize(&payload)).transpose()
     }
+}
+
+#[derive(Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedProfile {
+    profile_id: Uuid,
+    name: String,
 }
 
 fn serialize<T: Serialize>(value: &T) -> Result<String> {
@@ -469,6 +509,14 @@ fn profile_presences_key(profile_id: Uuid) -> String {
 
 fn profile_instances_key(profile_id: Uuid) -> String {
     format!("{KEY_PREFIX}:profile-instances:{profile_id}")
+}
+
+fn profile_by_id_key(profile_id: Uuid) -> String {
+    format!("{KEY_PREFIX}:profile:id:{profile_id}")
+}
+
+fn profile_by_name_key(name: &str) -> String {
+    format!("{KEY_PREFIX}:profile:name:{}", name.to_ascii_lowercase())
 }
 
 fn signaling_session_key(session_id: &str) -> String {

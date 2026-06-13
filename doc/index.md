@@ -1,6 +1,6 @@
 # NetherLink Server Docs
 
-NetherLink Server is a planned standalone Rust backend for NetherLink's Minecraft Java P2P multiplayer flow. It provides
+NetherLink Server is a standalone Rust backend for NetherLink's Minecraft Java P2P multiplayer flow. It provides
 REST endpoints for friends, runtime instances, Presence, TURN credentials, and a WebSocket relay for WebRTC signaling.
 
 The backend should stop treating Mojang Presence and official signaling as the source of truth. It should instead offer a
@@ -21,6 +21,8 @@ small service layer that keeps persistent data narrow and stores runtime multipl
 - [MVP Order](mvp-order.md): suggested implementation order.
 - [Client Migration Notes](client-migration.md): current client responsibilities to replace.
 - [Open Questions](open-questions.md): unresolved product and architecture choices.
+
+Operational metrics are exported at `GET /metrics` in Prometheus text format. Production mode emits JSON logs.
 
 ## Core Development Direction
 

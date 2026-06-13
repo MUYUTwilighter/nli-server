@@ -5,12 +5,13 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::{
-    auth::MinecraftProfileError,
+    auth::{MinecraftProfileError, ProfileIdentity},
     db::friends::{FriendRepository, RequestOutcome},
     model::friend::{FriendRequest, FriendSource, Friendship},
     model::presence::Presence,
@@ -107,11 +108,7 @@ pub async fn add_request(
 ) -> Result<Json<FriendMutationResponse>, ApiError> {
     let (_, caller) = authenticate_instance(&state, &headers).await?;
     let name = validate_player_name(&request.name)?;
-    let target = state
-        .minecraft_profiles
-        .lookup_by_name(name)
-        .await
-        .map_err(profile_lookup_error)?;
+    let target = resolve_profile_by_name(&state, name).await?;
     if caller.profile_id == target.profile_id {
         return Err(ApiError::bad_request(
             "SELF_FRIEND_REQUEST",
@@ -203,6 +200,7 @@ pub async fn remove_friend(
         .remove_friend(caller.profile_id, peer)
         .await
         .map_err(repository_error)?;
+    bridge_official_removal(&state, &headers, caller.profile_id, peer).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -281,8 +279,28 @@ async fn resolve_names(
 ) -> Result<HashMap<Uuid, Option<String>>, ApiError> {
     let mut names = HashMap::with_capacity(profile_ids.len());
     for profile_id in profile_ids {
+        if let Some((_, name)) = state
+            .redis
+            .cached_profile_by_id(profile_id)
+            .await
+            .map_err(redis_error)?
+        {
+            names.insert(profile_id, Some(name));
+            continue;
+        }
         match state.minecraft_profiles.lookup_by_id(profile_id).await {
             Ok(profile) => {
+                if let Err(error) = state
+                    .redis
+                    .cache_profile(
+                        profile.profile_id,
+                        &profile.name,
+                        state.config.profile_cache_ttl,
+                    )
+                    .await
+                {
+                    warn!(error = %error, %profile_id, "failed to cache Minecraft profile");
+                }
                 names.insert(profile_id, Some(profile.name));
             }
             Err(MinecraftProfileError::NotFound) => {
@@ -292,6 +310,84 @@ async fn resolve_names(
         }
     }
     Ok(names)
+}
+
+async fn resolve_profile_by_name(
+    state: &AppState,
+    name: &str,
+) -> Result<ProfileIdentity, ApiError> {
+    if let Some((profile_id, name)) = state
+        .redis
+        .cached_profile_by_name(name)
+        .await
+        .map_err(redis_error)?
+    {
+        return Ok(ProfileIdentity { profile_id, name });
+    }
+    let profile = state
+        .minecraft_profiles
+        .lookup_by_name(name)
+        .await
+        .map_err(profile_lookup_error)?;
+    state
+        .redis
+        .cache_profile(
+            profile.profile_id,
+            &profile.name,
+            state.config.profile_cache_ttl,
+        )
+        .await
+        .map_err(redis_error)?;
+    Ok(profile)
+}
+
+async fn bridge_official_removal(
+    state: &AppState,
+    headers: &HeaderMap,
+    caller_profile_id: Uuid,
+    peer: Uuid,
+) {
+    let Some(access_token) = official_bridge_token(headers) else {
+        metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "skipped").increment(1);
+        return;
+    };
+    let verified = match state.minecraft_auth.verify(&access_token).await {
+        Ok(identity) if identity.profile_id == caller_profile_id => true,
+        Ok(_) => false,
+        Err(error) => {
+            warn!(error = %error, profile_id = %caller_profile_id, "official removal token verification failed");
+            false
+        }
+    };
+    if !verified {
+        metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "invalid_token").increment(1);
+        return;
+    }
+    match state
+        .minecraft_social
+        .remove_friend(&access_token, peer)
+        .await
+    {
+        Ok(()) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "success").increment(1);
+        }
+        Err(error) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "upstream_error").increment(1);
+            warn!(error = %error, profile_id = %caller_profile_id, target_profile_id = %peer, "official friend removal failed");
+        }
+    }
+}
+
+fn official_bridge_token(headers: &HeaderMap) -> Option<SecretString> {
+    let value = headers
+        .get("x-minecraft-access-token")?
+        .to_str()
+        .ok()?
+        .trim();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return None;
+    }
+    Some(SecretString::from(value.to_owned()))
 }
 
 fn validate_player_name(name: &str) -> Result<&str, ApiError> {
@@ -324,6 +420,7 @@ async fn enforce_mutation_rate_limit(state: &AppState, profile_id: Uuid) -> Resu
         .await
         .map_err(redis_error)?;
     if count > FRIEND_MUTATION_LIMIT_PER_MINUTE {
+        metrics::counter!("nli_rate_limited_total", "endpoint" => "friend_mutation").increment(1);
         return Err(ApiError::rate_limited(
             "Friend mutation rate limit exceeded",
         ));
@@ -337,6 +434,8 @@ fn profile_lookup_error(error: MinecraftProfileError) -> ApiError {
             ApiError::not_found("PLAYER_NOT_FOUND", "Minecraft player was not found")
         }
         error => {
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_profile")
+                .increment(1);
             warn!(error = %error, "Minecraft profile lookup failed");
             ApiError::service_unavailable("Minecraft profile service is unavailable")
         }

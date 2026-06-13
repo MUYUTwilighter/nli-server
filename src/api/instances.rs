@@ -1,11 +1,12 @@
 use axum::{
     Json,
-    extract::State,
+    extract::{ConnectInfo, Extension, State},
     http::{HeaderMap, StatusCode},
 };
 use chrono::{DateTime, Utc};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, SocketAddr};
 use tracing::error;
 use uuid::Uuid;
 
@@ -25,13 +26,18 @@ const DEFAULT_DISPLAY_TEXT: &str = "Minecraft Java instance";
 const MAX_DISPLAY_TEXT_CHARS: usize = 96;
 const INSTANCE_CREATE_LIMIT_PER_MINUTE: u64 = 10;
 const MAX_RUNTIME_INSTANCES_PER_PROFILE: usize = 5;
+const INSTANCE_PREAUTH_LIMIT_PER_MINUTE_PER_IP: u64 = 60;
+const INSTANCE_PREAUTH_LIMIT_PER_MINUTE_GLOBAL: u64 = 600;
 
 pub async fn create(
     State(state): State<AppState>,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     Json(request): Json<CreateInstanceRequest>,
 ) -> Result<Json<RegisterInstanceResponse>, ApiError> {
-    let identity = authenticate_minecraft(&state, &headers).await?;
+    enforce_preauth_rate_limit(&state, &headers, connect_info.map(|value| value.0.0.ip())).await?;
+    let authenticated = authenticate_minecraft(&state, &headers).await?;
+    let identity = authenticated.identity;
     let display_text = sanitize_display_text(request.display_text)?;
     enforce_creation_rate_limit(&state, identity.profile_id).await?;
 
@@ -90,11 +96,115 @@ pub async fn create(
         ));
     }
 
+    if let Err(error) = state
+        .redis
+        .cache_profile(
+            identity.profile_id,
+            &identity.name,
+            state.config.profile_cache_ttl,
+        )
+        .await
+    {
+        error!(error = %error, profile_id = %identity.profile_id, "failed to cache registered Minecraft profile");
+    }
+    import_official_friends(&state, &authenticated.access_token, &identity).await;
+
     Ok(Json(RegisterInstanceResponse::new(
         &instance,
         &token,
         identity.name,
     )))
+}
+
+async fn enforce_preauth_rate_limit(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer_ip: Option<IpAddr>,
+) -> Result<(), ApiError> {
+    let client = registration_client_key(state, headers, peer_ip);
+    let window = std::time::Duration::from_secs(60);
+    let client_count = state
+        .redis
+        .increment_rate_limit(&format!("instance-preauth-ip:{client}"), window)
+        .await
+        .map_err(redis_error)?;
+    let global_count = state
+        .redis
+        .increment_rate_limit("instance-preauth-global", window)
+        .await
+        .map_err(redis_error)?;
+    if client_count > INSTANCE_PREAUTH_LIMIT_PER_MINUTE_PER_IP
+        || global_count > INSTANCE_PREAUTH_LIMIT_PER_MINUTE_GLOBAL
+    {
+        metrics::counter!("nli_rate_limited_total", "endpoint" => "instance_preauth").increment(1);
+        return Err(ApiError::rate_limited(
+            "Runtime instance authentication rate limit exceeded",
+        ));
+    }
+    Ok(())
+}
+
+fn registration_client_key(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer_ip: Option<IpAddr>,
+) -> String {
+    if state.config.trust_proxy_headers
+        && let Some(value) = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+        && let Some(address) = value.split(',').next().map(str::trim)
+        && let Ok(ip) = address.parse::<IpAddr>()
+    {
+        return ip.to_string();
+    }
+    peer_ip.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string())
+}
+
+async fn import_official_friends(
+    state: &AppState,
+    access_token: &secrecy::SecretString,
+    identity: &crate::auth::ProfileIdentity,
+) {
+    let snapshot = match state.minecraft_social.friends(access_token).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "upstream_error").increment(1);
+            tracing::warn!(error = %error, profile_id = %identity.profile_id, "official friend import skipped");
+            return;
+        }
+    };
+    for friend in &snapshot.friends {
+        if let Err(error) = state
+            .redis
+            .cache_profile(
+                friend.profile_id,
+                &friend.name,
+                state.config.profile_cache_ttl,
+            )
+            .await
+        {
+            tracing::warn!(error = %error, profile_id = %friend.profile_id, "failed to cache imported profile");
+        }
+    }
+    let friend_ids = snapshot
+        .friends
+        .iter()
+        .map(|friend| friend.profile_id)
+        .collect::<Vec<_>>();
+    match crate::db::friends::FriendRepository::new(state.db.clone())
+        .import_official_friends(identity.profile_id, &friend_ids)
+        .await
+    {
+        Ok(imported) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "success").increment(1);
+            tracing::info!(profile_id = %identity.profile_id, imported, "official friends imported");
+        }
+        Err(error) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "storage_error").increment(1);
+            tracing::error!(error = %error, profile_id = %identity.profile_id, "failed to import official friends");
+        }
+    }
 }
 
 pub async fn renew(
@@ -210,6 +320,7 @@ async fn enforce_creation_rate_limit(state: &AppState, profile_id: Uuid) -> Resu
         .await
         .map_err(redis_error)?;
     if count > INSTANCE_CREATE_LIMIT_PER_MINUTE {
+        metrics::counter!("nli_rate_limited_total", "endpoint" => "instance_create").increment(1);
         return Err(ApiError::rate_limited(
             "Runtime instance creation rate limit exceeded",
         ));

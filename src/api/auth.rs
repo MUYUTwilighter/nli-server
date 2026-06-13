@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use secrecy::SecretString;
 use tracing::warn;
 
 use crate::{
@@ -8,16 +9,25 @@ use crate::{
 
 use super::ApiError;
 
+pub(super) struct AuthenticatedMinecraft {
+    pub identity: ProfileIdentity,
+    pub access_token: SecretString,
+}
+
 pub(super) async fn authenticate_minecraft(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<ProfileIdentity, ApiError> {
+) -> Result<AuthenticatedMinecraft, ApiError> {
     let access_token = bearer_token(headers).map_err(map_bearer_error)?;
-    state
+    let identity = state
         .minecraft_auth
         .verify(&access_token)
         .await
-        .map_err(map_minecraft_error)
+        .map_err(map_minecraft_error)?;
+    Ok(AuthenticatedMinecraft {
+        identity,
+        access_token,
+    })
 }
 
 fn map_bearer_error(error: BearerTokenError) -> ApiError {
@@ -31,14 +41,20 @@ fn map_minecraft_error(error: MinecraftAuthError) -> ApiError {
             "Minecraft access token is invalid",
         ),
         MinecraftAuthError::Request(error) => {
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_auth")
+                .increment(1);
             warn!(error = %error, "Minecraft authentication request failed");
             ApiError::service_unavailable("Minecraft authentication service is unavailable")
         }
         MinecraftAuthError::UpstreamStatus(status) => {
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_auth")
+                .increment(1);
             warn!(%status, "Minecraft authentication service returned an error");
             ApiError::service_unavailable("Minecraft authentication service is unavailable")
         }
         MinecraftAuthError::InvalidResponse(error) => {
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_auth")
+                .increment(1);
             warn!(error = %error, "Minecraft authentication response was invalid");
             ApiError::bad_gateway(
                 "AUTH_SERVICE_ERROR",
@@ -46,6 +62,8 @@ fn map_minecraft_error(error: MinecraftAuthError) -> ApiError {
             )
         }
         MinecraftAuthError::InvalidProfileId(_) => {
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_auth")
+                .increment(1);
             warn!("Minecraft authentication response contained an invalid profile id");
             ApiError::bad_gateway(
                 "AUTH_SERVICE_ERROR",

@@ -3,7 +3,7 @@ use std::{env, net::SocketAddr, time::Duration};
 use anyhow::{Context, Result};
 use axum::http::HeaderValue;
 use reqwest::Url;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -14,18 +14,21 @@ pub struct AppConfig {
     pub instance_token_ttl: Duration,
     pub presence_ttl: Duration,
     pub signaling_session_ttl: Duration,
+    pub profile_cache_ttl: Duration,
     pub turn_urls: Vec<String>,
     pub turn_shared_secret: SecretString,
     pub turn_credential_ttl: Duration,
     pub cors_allow_origin: Option<HeaderValue>,
+    pub trust_proxy_headers: bool,
     pub minecraft_profile_url: Url,
     pub minecraft_profile_by_name_url: Url,
     pub minecraft_profile_by_id_url: Url,
+    pub minecraft_friends_url: Url,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
-        Ok(Self {
+        let config = Self {
             env: env::var("NLI_ENV").unwrap_or_else(|_| "development".to_owned()),
             bind_addr: env::var("NLI_BIND_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:8080".to_owned())
@@ -36,6 +39,7 @@ impl AppConfig {
             instance_token_ttl: seconds_var("INSTANCE_TOKEN_TTL_SECONDS", 1_800)?,
             presence_ttl: seconds_var("PRESENCE_TTL_SECONDS", 90)?,
             signaling_session_ttl: seconds_var("SIGNALING_SESSION_TTL_SECONDS", 300)?,
+            profile_cache_ttl: seconds_var("PROFILE_CACHE_TTL_SECONDS", 21_600)?,
             turn_urls: turn_urls()?,
             turn_shared_secret: SecretString::from(required_var("TURN_SHARED_SECRET")?),
             turn_credential_ttl: bounded_seconds_var(
@@ -52,6 +56,7 @@ impl AppConfig {
                         .context("NLI_CORS_ALLOW_ORIGIN must be a valid HTTP header value")
                 })
                 .transpose()?,
+            trust_proxy_headers: bool_var("NLI_TRUST_PROXY_HEADERS", false)?,
             minecraft_profile_url: env::var("MINECRAFT_PROFILE_URL")
                 .unwrap_or_else(|_| {
                     "https://api.minecraftservices.com/minecraft/profile".to_owned()
@@ -66,7 +71,67 @@ impl AppConfig {
                 "MINECRAFT_PROFILE_BY_ID_URL",
                 "https://sessionserver.mojang.com/session/minecraft/profile/",
             )?,
-        })
+            minecraft_friends_url: env::var("MINECRAFT_FRIENDS_URL")
+                .unwrap_or_else(|_| "https://api.minecraftservices.com/friends".to_owned())
+                .parse()
+                .context("MINECRAFT_FRIENDS_URL must be a valid URL")?,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.profile_cache_ttl.is_zero() {
+            anyhow::bail!("PROFILE_CACHE_TTL_SECONDS must be greater than zero");
+        }
+        if self.env.eq_ignore_ascii_case("production") {
+            if self.bind_addr.ip().is_loopback() {
+                anyhow::bail!("NLI_BIND_ADDR must not use a loopback address in production");
+            }
+            if self.turn_shared_secret.expose_secret().len() < 32
+                || self
+                    .turn_shared_secret
+                    .expose_secret()
+                    .contains("change-me")
+            {
+                anyhow::bail!("TURN_SHARED_SECRET must be a strong production secret");
+            }
+            for (name, url) in [
+                ("MINECRAFT_PROFILE_URL", &self.minecraft_profile_url),
+                (
+                    "MINECRAFT_PROFILE_BY_NAME_URL",
+                    &self.minecraft_profile_by_name_url,
+                ),
+                (
+                    "MINECRAFT_PROFILE_BY_ID_URL",
+                    &self.minecraft_profile_by_id_url,
+                ),
+                ("MINECRAFT_FRIENDS_URL", &self.minecraft_friends_url),
+            ] {
+                if url.scheme() != "https" {
+                    anyhow::bail!("{name} must use HTTPS in production");
+                }
+            }
+            if let Some(origin) = &self.cors_allow_origin {
+                let origin = origin
+                    .to_str()
+                    .context("NLI_CORS_ALLOW_ORIGIN must be text")?;
+                if !origin.starts_with("https://") {
+                    anyhow::bail!("NLI_CORS_ALLOW_ORIGIN must use HTTPS in production");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn bool_var(name: &str, default: bool) -> Result<bool> {
+    match env::var(name) {
+        Ok(value) if value.eq_ignore_ascii_case("true") || value == "1" => Ok(true),
+        Ok(value) if value.eq_ignore_ascii_case("false") || value == "0" => Ok(false),
+        Ok(_) => anyhow::bail!("{name} must be true, false, 1, or 0"),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error).with_context(|| format!("failed to read {name}")),
     }
 }
 

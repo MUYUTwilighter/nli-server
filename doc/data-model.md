@@ -114,6 +114,9 @@ Presence list and can use it to distinguish multiple joinable entries for the sa
 
 The backend should not parse this text for logic. It is display-only.
 
+Minecraft profile names are replaceable cache data stored in Redis under UUID and case-insensitive name keys. They use a
+configurable TTL (`PROFILE_CACHE_TTL_SECONDS`, six hours by default) and are not part of the persistent account model.
+
 Examples:
 
 - `1.20.1 Forge - Singleplayer world`

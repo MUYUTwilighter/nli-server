@@ -13,6 +13,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderName, Method},
+    middleware,
     routing::{delete, get, post, put},
 };
 use tower_http::{
@@ -34,6 +35,7 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         .route("/health", get(health::health))
+        .route("/metrics", get(crate::observability::metrics))
         .route("/v1/instances", post(instances::create))
         .route("/v1/instances/renew", post(instances::renew))
         .route("/v1/instances/current", delete(instances::close))
@@ -57,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/turn", post(turn::credentials))
         .fallback(error::not_found)
         .with_state(state)
+        .layer(middleware::from_fn(crate::observability::track_http))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,

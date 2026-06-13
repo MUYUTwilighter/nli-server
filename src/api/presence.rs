@@ -170,6 +170,7 @@ async fn enforce_publish_rate_limit(state: &AppState, presence_id: &str) -> Resu
         .await
         .map_err(redis_error)?;
     if count > 1 {
+        metrics::counter!("nli_rate_limited_total", "endpoint" => "presence_publish").increment(1);
         return Err(ApiError::rate_limited(
             "Presence publish rate limit exceeded",
         ));

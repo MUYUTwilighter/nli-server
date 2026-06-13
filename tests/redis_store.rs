@@ -27,6 +27,16 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
     let now = Utc::now();
     let ttl = Duration::from_secs(30);
 
+    store.cache_profile(profile_id, "CachedPlayer", ttl).await?;
+    assert_eq!(
+        store.cached_profile_by_id(profile_id).await?,
+        Some((profile_id, "CachedPlayer".to_owned()))
+    );
+    assert_eq!(
+        store.cached_profile_by_name("cachedplayer").await?,
+        Some((profile_id, "CachedPlayer".to_owned()))
+    );
+
     let instance = RuntimeInstance {
         profile_id,
         presence_id: presence_id.clone(),

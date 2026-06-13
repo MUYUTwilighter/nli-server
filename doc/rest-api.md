@@ -1,7 +1,8 @@
 # REST API Draft
 
-The client submits its Minecraft access token only when creating a runtime instance. Every subsequent authenticated
-endpoint derives the caller profile and Presence from the returned `instanceToken`.
+The client submits its Minecraft access token when creating a runtime instance. Every subsequent authenticated endpoint
+derives the caller profile and Presence from the returned `instanceToken`. Best-effort official friend deletion is the
+only exception and may receive the Minecraft token again in `X-Minecraft-Access-Token`; it is never persisted.
 
 Use JSON for request and response bodies.
 
@@ -42,6 +43,9 @@ Healthy response:
 The endpoint returns `503 Service Unavailable` with `status=degraded` when either dependency fails or exceeds the
 health-check timeout. Dependency errors are logged internally but are not included in the response.
 
+Prometheus metrics are available from `GET /metrics`. They include HTTP request counts and latency, active signaling
+WebSockets, rate-limit events, Minecraft upstream failures, and official friend synchronization results.
+
 ## Create Runtime Instance
 
 ```http
@@ -71,6 +75,9 @@ Response:
 
 `presenceId` is public and may be shown to friends or used as a signaling target. `instanceToken` is private and must be
 used for Presence updates and the signaling WebSocket.
+
+Registration also attempts to import established friends from the official Minecraft friends API. This is best effort:
+registration succeeds even when the official friends endpoint is unavailable or returns an incompatible response.
 
 Instance token requirements:
 
@@ -211,10 +218,12 @@ Deletes the pending NetherLink request involving the caller and target. Returns 
 ```http
 DELETE /v1/friends/{profileId}
 Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <optional one-use minecraft token>
 ```
 
-Deletes the NetherLink friendship. Returns `204 No Content` and is idempotent. Official friend synchronization is not
-currently attempted.
+Deletes the NetherLink friendship. Returns `204 No Content` and is idempotent. When the optional Minecraft token is
+present and belongs to the same profile as the instance token, the backend also attempts the official
+`updateType=REMOVE` operation. Official failure is logged and counted but does not restore the local relationship.
 
 Friend request, acceptance, decline, revoke, and removal operations share a limit of 10 attempts per caller per minute.
 

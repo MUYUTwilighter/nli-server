@@ -8,5 +8,9 @@ NetherLink client code should eventually replace:
 - `SignalingClient` official signaling configuration and JSON-RPC calls with `/v1/signaling/ws`.
 - TURN auth request with `/v1/turn`.
 
+Instance registration automatically imports established official friends. To request best-effort removal from both
+NetherLink and the official friend graph, the client may add its current Minecraft token as
+`X-Minecraft-Access-Token` on `DELETE /v1/friends/{profileId}`. Ordinary NetherLink requests must not resend that token.
+
 The existing WebRTC handshake message model can remain mostly unchanged. The transport envelope should route by
 `profile_id + presence_id` so a friend can choose a specific running instance to join.

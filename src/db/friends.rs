@@ -181,6 +181,48 @@ impl FriendRepository {
         friendship_exists_pool(&self.pool, profile_low, profile_high).await
     }
 
+    pub async fn import_official_friends(
+        &self,
+        profile_id: Uuid,
+        friend_ids: &[Uuid],
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut imported = 0;
+        for friend_id in friend_ids {
+            let Some((profile_low, profile_high)) = normalize_friend_pair(profile_id, *friend_id)
+            else {
+                continue;
+            };
+            let result = sqlx::query(
+                r#"
+                INSERT INTO friendships (profile_low, profile_high, source)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (profile_low, profile_high) DO NOTHING
+                "#,
+            )
+            .bind(profile_low)
+            .bind(profile_high)
+            .bind(FriendSource::MinecraftImport.as_str())
+            .execute(&mut *transaction)
+            .await?;
+            imported += result.rows_affected();
+
+            sqlx::query(
+                r#"
+                DELETE FROM friend_requests
+                WHERE (requester_profile_id = $1 AND target_profile_id = $2)
+                   OR (requester_profile_id = $2 AND target_profile_id = $1)
+                "#,
+            )
+            .bind(profile_id)
+            .bind(friend_id)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(imported)
+    }
+
     async fn requests_by_target(&self, profile_id: Uuid) -> Result<Vec<FriendRequest>> {
         request_rows(&self.pool, "target_profile_id", profile_id).await
     }

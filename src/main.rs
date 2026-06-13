@@ -3,8 +3,10 @@ use nli_server::{
     api::{AppState, router},
     config::AppConfig,
     db,
+    observability::install_metrics,
     redis::RedisStore,
 };
+use std::net::SocketAddr;
 use tokio::{net::TcpListener, signal};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -18,7 +20,8 @@ async fn main() -> Result<()> {
     let db_pool = db::connect(&config.database_url).await?;
     let redis = RedisStore::connect(&config.redis_url).await?;
     let bind_addr = config.bind_addr;
-    let state = AppState::new(config, db_pool, redis)?;
+    let metrics = install_metrics().context("failed to install metrics recorder")?;
+    let state = AppState::new(config, db_pool, redis)?.with_metrics(metrics);
     let shutdown_state = state.clone();
     let app = router(state);
     let listener = TcpListener::bind(bind_addr)
@@ -30,10 +33,13 @@ async fn main() -> Result<()> {
         "NetherLink server listening"
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_state))
-        .await
-        .context("HTTP server failed")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_state))
+    .await
+    .context("HTTP server failed")?;
 
     Ok(())
 }
@@ -66,6 +72,17 @@ async fn shutdown_signal(state: AppState) {
 }
 
 fn init_tracing() {
+    let json = std::env::var("NLI_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production"));
+    if json {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "nli_server=info,tower_http=info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
+        return;
+    }
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
