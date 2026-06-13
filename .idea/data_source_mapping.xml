@@ -3,5 +3,6 @@
   <component name="DataSourcePerFileMappings">
     <file url="file://$PROJECT_DIR$/src/db/friends.rs" value="e0a22e6e-5a2e-49ab-bc5b-408a0a2946c5" />
     <file url="file://$PROJECT_DIR$/tests/friend_api.rs" value="e0a22e6e-5a2e-49ab-bc5b-408a0a2946c5" />
+    <file url="file://$PROJECT_DIR$/tests/signaling_ws.rs" value="e0a22e6e-5a2e-49ab-bc5b-408a0a2946c5" />
   </component>
 </project>
