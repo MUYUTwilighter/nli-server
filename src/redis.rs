@@ -32,6 +32,18 @@ impl RedisStore {
         Ok(Self { connection })
     }
 
+    pub async fn health_check(&self) -> Result<()> {
+        let mut connection = self.connection.clone();
+        let response = redis::cmd("PING")
+            .query_async::<String>(&mut connection)
+            .await
+            .context("Redis health check failed")?;
+        if response != "PONG" {
+            bail!("Redis health check returned an unexpected response");
+        }
+        Ok(())
+    }
+
     pub async fn put_runtime_instance(
         &self,
         token_hash: &RuntimeTokenHash,

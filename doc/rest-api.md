@@ -21,6 +21,27 @@ GET /health
 
 Returns service status.
 
+Healthy response:
+
+```json
+{
+  "status": "ok",
+  "dependencies": {
+    "postgres": {
+      "healthy": true,
+      "latencyMs": 2
+    },
+    "redis": {
+      "healthy": true,
+      "latencyMs": 1
+    }
+  }
+}
+```
+
+The endpoint returns `503 Service Unavailable` with `status=degraded` when either dependency fails or exceeds the
+health-check timeout. Dependency errors are logged internally but are not included in the response.
+
 ## Auth Probe
 
 ```http

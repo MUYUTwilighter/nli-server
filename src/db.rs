@@ -27,3 +27,11 @@ pub async fn connect(database_url: &str) -> Result<DbPool> {
 
     Ok(pool)
 }
+
+pub async fn health_check(pool: &DbPool) -> Result<()> {
+    sqlx::query("SELECT 1")
+        .execute(pool)
+        .await
+        .context("PostgreSQL health check failed")?;
+    Ok(())
+}

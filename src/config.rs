@@ -1,8 +1,9 @@
 use std::{env, net::SocketAddr, time::Duration};
 
 use anyhow::{Context, Result};
+use axum::http::HeaderValue;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppConfig {
     pub env: String,
     pub bind_addr: SocketAddr,
@@ -11,6 +12,7 @@ pub struct AppConfig {
     pub instance_token_ttl: Duration,
     pub presence_ttl: Duration,
     pub signaling_session_ttl: Duration,
+    pub cors_allow_origin: Option<HeaderValue>,
 }
 
 impl AppConfig {
@@ -26,6 +28,14 @@ impl AppConfig {
             instance_token_ttl: seconds_var("INSTANCE_TOKEN_TTL_SECONDS", 1_800)?,
             presence_ttl: seconds_var("PRESENCE_TTL_SECONDS", 90)?,
             signaling_session_ttl: seconds_var("SIGNALING_SESSION_TTL_SECONDS", 300)?,
+            cors_allow_origin: env::var("NLI_CORS_ALLOW_ORIGIN")
+                .ok()
+                .map(|value| {
+                    value
+                        .parse()
+                        .context("NLI_CORS_ALLOW_ORIGIN must be a valid HTTP header value")
+                })
+                .transpose()?,
         })
     }
 }
