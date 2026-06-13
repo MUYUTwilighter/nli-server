@@ -1,3 +1,4 @@
+mod auth;
 mod error;
 mod health;
 
@@ -7,7 +8,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderName, Method},
-    routing::get,
+    routing::{get, post},
 };
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -16,8 +17,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::state::AppState;
-
+pub use crate::state::AppState;
 pub use error::ApiError;
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         .route("/health", get(health::health))
+        .route("/v1/auth/verify", post(auth::verify))
         .fallback(error::not_found)
         .with_state(state)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))

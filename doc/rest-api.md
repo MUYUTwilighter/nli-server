@@ -54,13 +54,12 @@ Response:
 ```json
 {
   "profileId": "uuid",
-  "name": "PlayerName",
-  "sessionToken": "optional-short-lived-token",
-  "expiresIn": 900
+  "name": "PlayerName"
 }
 ```
 
-The backend must not persist the Minecraft token.
+The backend currently verifies identity directly for each operation that needs a Minecraft token. It does not issue a
+NetherLink account session token yet. The backend must not persist or log the Minecraft token.
 
 ## Create Runtime Instance
 

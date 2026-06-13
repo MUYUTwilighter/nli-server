@@ -1,5 +1,10 @@
 use anyhow::{Context, Result};
-use nli_server::{api, config::AppConfig, db, redis::RedisStore, state::AppState};
+use nli_server::{
+    api::{AppState, router},
+    config::AppConfig,
+    db,
+    redis::RedisStore,
+};
 use tokio::{net::TcpListener, signal};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -14,7 +19,7 @@ async fn main() -> Result<()> {
     let redis = RedisStore::connect(&config.redis_url).await?;
     let bind_addr = config.bind_addr;
     let state = AppState::new(config, db_pool, redis)?;
-    let app = api::router(state);
+    let app = router(state);
     let listener = TcpListener::bind(bind_addr)
         .await
         .with_context(|| format!("failed to bind server to {bind_addr}"))?;

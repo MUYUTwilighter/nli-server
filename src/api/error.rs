@@ -28,6 +28,14 @@ impl ApiError {
             message,
         )
     }
+
+    pub fn unauthorized(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, code, message)
+    }
+
+    pub fn bad_gateway(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_GATEWAY, code, message)
+    }
 }
 
 impl IntoResponse for ApiError {

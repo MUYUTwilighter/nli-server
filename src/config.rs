@@ -2,6 +2,7 @@ use std::{env, net::SocketAddr, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::http::HeaderValue;
+use reqwest::Url;
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -13,6 +14,7 @@ pub struct AppConfig {
     pub presence_ttl: Duration,
     pub signaling_session_ttl: Duration,
     pub cors_allow_origin: Option<HeaderValue>,
+    pub minecraft_profile_url: Url,
 }
 
 impl AppConfig {
@@ -36,6 +38,12 @@ impl AppConfig {
                         .context("NLI_CORS_ALLOW_ORIGIN must be a valid HTTP header value")
                 })
                 .transpose()?,
+            minecraft_profile_url: env::var("MINECRAFT_PROFILE_URL")
+                .unwrap_or_else(|_| {
+                    "https://api.minecraftservices.com/minecraft/profile".to_owned()
+                })
+                .parse()
+                .context("MINECRAFT_PROFILE_URL must be a valid URL")?,
         })
     }
 }

@@ -1,7 +1,12 @@
 use std::env;
 
 use anyhow::Result;
-use nli_server::{api, config::AppConfig, db, redis::RedisStore, state::AppState};
+use nli_server::{
+    api::{AppState, router},
+    config::AppConfig,
+    db,
+    redis::RedisStore,
+};
 use serde_json::Value;
 use tokio::net::TcpListener;
 
@@ -15,7 +20,7 @@ async fn health_endpoint_reports_ready_dependencies() -> Result<()> {
     let state = AppState::new(config, database, redis)?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let server = tokio::spawn(async move { axum::serve(listener, api::router(state)).await });
+    let server = tokio::spawn(async move { axum::serve(listener, router(state)).await });
     let client = reqwest::Client::new();
 
     let response = client

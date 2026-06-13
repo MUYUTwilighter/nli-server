@@ -3,6 +3,14 @@ name = "nli-server"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "nli_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nli-server"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0"
 argon2 = "0.5"
