@@ -1,0 +1,387 @@
+use std::{collections::HashMap, time::Duration};
+
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+};
+use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
+use uuid::Uuid;
+
+use crate::{
+    auth::MinecraftProfileError,
+    db::friends::{FriendRepository, RequestOutcome},
+    model::friend::{FriendRequest, FriendSource, Friendship},
+    model::presence::Presence,
+    state::AppState,
+};
+
+use super::{ApiError, instances::authenticate_instance};
+
+const FRIEND_MUTATION_LIMIT_PER_MINUTE: u64 = 10;
+
+pub async fn snapshot(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<FriendSnapshotResponse>, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let snapshot = FriendRepository::new(state.db.clone())
+        .snapshot(caller.profile_id)
+        .await
+        .map_err(repository_error)?;
+
+    let mut profile_ids = Vec::new();
+    for friendship in &snapshot.friends {
+        profile_ids.push(friend_profile_id(friendship, caller.profile_id));
+    }
+    for request in &snapshot.incoming_requests {
+        profile_ids.push(request.requester_profile_id);
+    }
+    for request in &snapshot.outgoing_requests {
+        profile_ids.push(request.target_profile_id);
+    }
+    profile_ids.sort_unstable();
+    profile_ids.dedup();
+    let names = resolve_names(&state, profile_ids).await?;
+
+    Ok(Json(FriendSnapshotResponse {
+        friends: snapshot
+            .friends
+            .into_iter()
+            .map(|friendship| {
+                let profile_id = friend_profile_id(&friendship, caller.profile_id);
+                FriendResponse {
+                    profile_id,
+                    name: names.get(&profile_id).cloned().flatten(),
+                    source: friendship.source,
+                }
+            })
+            .collect(),
+        incoming_requests: snapshot
+            .incoming_requests
+            .into_iter()
+            .map(|request| request_response(request, true, &names))
+            .collect(),
+        outgoing_requests: snapshot
+            .outgoing_requests
+            .into_iter()
+            .map(|request| request_response(request, false, &names))
+            .collect(),
+    }))
+}
+
+pub async fn presence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<FriendPresenceResponse>, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let snapshot = FriendRepository::new(state.db.clone())
+        .snapshot(caller.profile_id)
+        .await
+        .map_err(repository_error)?;
+    let mut statuses = Vec::new();
+    for friendship in &snapshot.friends {
+        let friend_profile_id = friend_profile_id(friendship, caller.profile_id);
+        statuses.extend(
+            state
+                .redis
+                .presences_for_profile(friend_profile_id)
+                .await
+                .map_err(redis_error)?,
+        );
+    }
+    statuses.sort_unstable_by(|left, right| {
+        left.profile_id
+            .cmp(&right.profile_id)
+            .then_with(|| left.presence_id.cmp(&right.presence_id))
+    });
+
+    Ok(Json(FriendPresenceResponse { statuses }))
+}
+
+pub async fn add_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AddFriendRequest>,
+) -> Result<Json<FriendMutationResponse>, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let name = validate_player_name(&request.name)?;
+    let target = state
+        .minecraft_profiles
+        .lookup_by_name(name)
+        .await
+        .map_err(profile_lookup_error)?;
+    if caller.profile_id == target.profile_id {
+        return Err(ApiError::bad_request(
+            "SELF_FRIEND_REQUEST",
+            "Cannot send a friend request to yourself",
+        ));
+    }
+    enforce_mutation_rate_limit(&state, caller.profile_id).await?;
+
+    let repository = FriendRepository::new(state.db.clone());
+    if repository
+        .are_friends(caller.profile_id, target.profile_id)
+        .await
+        .map_err(repository_error)?
+    {
+        return Err(ApiError::conflict(
+            "ALREADY_FRIENDS",
+            "Players are already friends",
+        ));
+    }
+    let outcome = repository
+        .request_or_accept(
+            caller.profile_id,
+            target.profile_id,
+            FriendSource::Netherlink,
+        )
+        .await
+        .map_err(repository_error)?;
+
+    Ok(Json(FriendMutationResponse {
+        result: "SUCCESS",
+        relationship: match outcome {
+            RequestOutcome::Requested => "REQUESTED",
+            RequestOutcome::Accepted => "ACCEPTED",
+        },
+        official_sync: "SKIPPED",
+    }))
+}
+
+pub async fn accept_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(profile_id): Path<String>,
+) -> Result<Json<FriendMutationResponse>, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let requester = parse_profile_id(&profile_id)?;
+    enforce_mutation_rate_limit(&state, caller.profile_id).await?;
+    let accepted = FriendRepository::new(state.db.clone())
+        .accept(caller.profile_id, requester)
+        .await
+        .map_err(repository_error)?;
+    if !accepted {
+        return Err(ApiError::not_found(
+            "FRIEND_REQUEST_NOT_FOUND",
+            "Incoming friend request was not found",
+        ));
+    }
+
+    Ok(Json(FriendMutationResponse {
+        result: "SUCCESS",
+        relationship: "ACCEPTED",
+        official_sync: "SKIPPED",
+    }))
+}
+
+pub async fn delete_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(profile_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let peer = parse_profile_id(&profile_id)?;
+    enforce_mutation_rate_limit(&state, caller.profile_id).await?;
+    FriendRepository::new(state.db.clone())
+        .delete_request(caller.profile_id, peer)
+        .await
+        .map_err(repository_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn remove_friend(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(profile_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let peer = parse_profile_id(&profile_id)?;
+    enforce_mutation_rate_limit(&state, caller.profile_id).await?;
+    FriendRepository::new(state.db.clone())
+        .remove_friend(caller.profile_id, peer)
+        .await
+        .map_err(repository_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddFriendRequest {
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendSnapshotResponse {
+    friends: Vec<FriendResponse>,
+    incoming_requests: Vec<FriendRequestResponse>,
+    outgoing_requests: Vec<FriendRequestResponse>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendPresenceResponse {
+    statuses: Vec<Presence>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FriendResponse {
+    profile_id: Uuid,
+    name: Option<String>,
+    source: FriendSource,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FriendRequestResponse {
+    profile_id: Uuid,
+    name: Option<String>,
+    source: FriendSource,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendMutationResponse {
+    result: &'static str,
+    relationship: &'static str,
+    official_sync: &'static str,
+}
+
+fn friend_profile_id(friendship: &Friendship, caller: Uuid) -> Uuid {
+    if friendship.profile_low == caller {
+        friendship.profile_high
+    } else {
+        friendship.profile_low
+    }
+}
+
+fn request_response(
+    request: FriendRequest,
+    incoming: bool,
+    names: &HashMap<Uuid, Option<String>>,
+) -> FriendRequestResponse {
+    let profile_id = if incoming {
+        request.requester_profile_id
+    } else {
+        request.target_profile_id
+    };
+    FriendRequestResponse {
+        profile_id,
+        name: names.get(&profile_id).cloned().flatten(),
+        source: request.source,
+    }
+}
+
+async fn resolve_names(
+    state: &AppState,
+    profile_ids: Vec<Uuid>,
+) -> Result<HashMap<Uuid, Option<String>>, ApiError> {
+    let mut names = HashMap::with_capacity(profile_ids.len());
+    for profile_id in profile_ids {
+        match state.minecraft_profiles.lookup_by_id(profile_id).await {
+            Ok(profile) => {
+                names.insert(profile_id, Some(profile.name));
+            }
+            Err(MinecraftProfileError::NotFound) => {
+                names.insert(profile_id, None);
+            }
+            Err(error) => return Err(profile_lookup_error(error)),
+        }
+    }
+    Ok(names)
+}
+
+fn validate_player_name(name: &str) -> Result<&str, ApiError> {
+    let name = name.trim();
+    if !(3..=16).contains(&name.len())
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_PLAYER_NAME",
+            "Minecraft player name must be 3-16 ASCII letters, digits, or underscores",
+        ));
+    }
+    Ok(name)
+}
+
+fn parse_profile_id(value: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(value)
+        .map_err(|_| ApiError::bad_request("INVALID_PROFILE_ID", "profileId must be a valid UUID"))
+}
+
+async fn enforce_mutation_rate_limit(state: &AppState, profile_id: Uuid) -> Result<(), ApiError> {
+    let count = state
+        .redis
+        .increment_rate_limit(
+            &format!("friend-mutation:{profile_id}"),
+            Duration::from_secs(60),
+        )
+        .await
+        .map_err(redis_error)?;
+    if count > FRIEND_MUTATION_LIMIT_PER_MINUTE {
+        return Err(ApiError::rate_limited(
+            "Friend mutation rate limit exceeded",
+        ));
+    }
+    Ok(())
+}
+
+fn profile_lookup_error(error: MinecraftProfileError) -> ApiError {
+    match error {
+        MinecraftProfileError::NotFound => {
+            ApiError::not_found("PLAYER_NOT_FOUND", "Minecraft player was not found")
+        }
+        error => {
+            warn!(error = %error, "Minecraft profile lookup failed");
+            ApiError::service_unavailable("Minecraft profile service is unavailable")
+        }
+    }
+}
+
+fn repository_error(error: anyhow::Error) -> ApiError {
+    error!(error = %error, "friend repository operation failed");
+    ApiError::internal("Friend storage operation failed")
+}
+
+fn redis_error(error: anyhow::Error) -> ApiError {
+    error!(error = %error, "friend rate-limit operation failed");
+    ApiError::service_unavailable("Friend service is unavailable")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_minecraft_player_names() {
+        assert_eq!(
+            validate_player_name("  Player_123  ").unwrap(),
+            "Player_123"
+        );
+        assert!(validate_player_name("ab").is_err());
+        assert!(validate_player_name("player-name").is_err());
+        assert!(validate_player_name("界界界").is_err());
+        assert!(validate_player_name("a1234567890123456").is_err());
+    }
+
+    #[test]
+    fn selects_the_other_friend_profile() {
+        let low = Uuid::from_u128(1);
+        let high = Uuid::from_u128(2);
+        let now = chrono::Utc::now();
+        let friendship = Friendship {
+            profile_low: low,
+            profile_high: high,
+            source: FriendSource::Netherlink,
+            created_at: now,
+            updated_at: now,
+        };
+        assert_eq!(friend_profile_id(&friendship, low), high);
+        assert_eq!(friend_profile_id(&friendship, high), low);
+    }
+}

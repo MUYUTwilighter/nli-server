@@ -67,7 +67,6 @@ presence
 - profile_id uuid
 - presence_id text
 - token_hash text
-- pmid text nullable
 - status text
 - joinable boolean
 - session_id text nullable
@@ -139,7 +138,7 @@ nli:instance:{token_hash} -> RuntimeInstance JSON
 nli:presence-instance:{presence_id} -> token_hash
 ```
 
-`RuntimeInstance` contains `profile_id`, `presence_id`, optional `pmid`, start time, issue time, and expiry time. The raw
+`RuntimeInstance` contains `profile_id`, `presence_id`, start time, issue time, and expiry time. The raw
 instance token must never be stored. Rotating a token replaces the reverse mapping and deletes the previous token hash
 entry.
 

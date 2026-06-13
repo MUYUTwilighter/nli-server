@@ -4,7 +4,10 @@ use axum::http::{HeaderMap, header::AUTHORIZATION};
 use secrecy::SecretString;
 use thiserror::Error;
 
-pub use minecraft::{MinecraftAuthClient, MinecraftAuthError, ProfileIdentity};
+pub use minecraft::{
+    MinecraftAuthClient, MinecraftAuthError, MinecraftProfileClient, MinecraftProfileError,
+    ProfileIdentity,
+};
 
 pub fn bearer_token(headers: &HeaderMap) -> Result<SecretString, BearerTokenError> {
     let value = headers

@@ -3,7 +3,13 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-use crate::{auth::MinecraftAuthClient, config::AppConfig, db::DbPool, redis::RedisStore};
+use crate::{
+    auth::{MinecraftAuthClient, MinecraftProfileClient},
+    config::AppConfig,
+    db::DbPool,
+    redis::RedisStore,
+    signaling::SignalingConnections,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -12,6 +18,8 @@ pub struct AppState {
     pub redis: RedisStore,
     pub http: Client,
     pub minecraft_auth: MinecraftAuthClient,
+    pub minecraft_profiles: MinecraftProfileClient,
+    pub signaling_connections: SignalingConnections,
 }
 
 impl AppState {
@@ -34,6 +42,11 @@ impl AppState {
     ) -> Self {
         let minecraft_auth =
             MinecraftAuthClient::new(http.clone(), config.minecraft_profile_url.clone());
+        let minecraft_profiles = MinecraftProfileClient::new(
+            http.clone(),
+            config.minecraft_profile_by_name_url.clone(),
+            config.minecraft_profile_by_id_url.clone(),
+        );
 
         Self {
             config: Arc::new(config),
@@ -41,6 +54,8 @@ impl AppState {
             redis,
             http,
             minecraft_auth,
+            minecraft_profiles,
+            signaling_connections: SignalingConnections::default(),
         }
     }
 

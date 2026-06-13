@@ -2,6 +2,7 @@
 name = "nli-server"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 
 [lib]
 name = "nli_server"
@@ -13,27 +14,27 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-argon2 = "0.5"
-async-trait = "0.1"
-axum = { version = "0.8", features = ["macros", "ws"] }
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 blake3 = "1.5"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"
-hmac = "0.12"
-rand = "0.8"
-redis = { version = "0.28", features = ["aio", "tokio-comp", "connection-manager"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-secrecy = { version = "0.10", features = ["serde"] }
+hmac = "0.13"
+rand = "0.10"
+redis = { version = "1.2", features = ["aio", "tokio-comp", "connection-manager"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
+sha1 = "0.11"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "chrono", "macros", "migrate"] }
 thiserror = "2.0"
 tokio = { version = "1.45", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 uuid = { version = "1.16", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.29"

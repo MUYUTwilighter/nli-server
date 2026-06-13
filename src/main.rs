@@ -19,6 +19,7 @@ async fn main() -> Result<()> {
     let redis = RedisStore::connect(&config.redis_url).await?;
     let bind_addr = config.bind_addr;
     let state = AppState::new(config, db_pool, redis)?;
+    let shutdown_state = state.clone();
     let app = router(state);
     let listener = TcpListener::bind(bind_addr)
         .await
@@ -30,14 +31,14 @@ async fn main() -> Result<()> {
     );
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_state))
         .await
         .context("HTTP server failed")?;
 
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(state: AppState) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -60,7 +61,8 @@ async fn shutdown_signal() {
         () = terminate => {},
     }
 
-    info!("shutdown signal received");
+    let closed_connections = state.signaling_connections.close_all().await;
+    info!(closed_connections, "shutdown signal received");
 }
 
 fn init_tracing() {

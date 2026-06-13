@@ -1,7 +1,7 @@
 # REST API Draft
 
-All authenticated endpoints should resolve the caller profile from the provided Minecraft token or NetherLink short
-session token.
+The client submits its Minecraft access token only when creating a runtime instance. Every subsequent authenticated
+endpoint derives the caller profile and Presence from the returned `instanceToken`.
 
 Use JSON for request and response bodies.
 
@@ -42,25 +42,6 @@ Healthy response:
 The endpoint returns `503 Service Unavailable` with `status=degraded` when either dependency fails or exceeds the
 health-check timeout. Dependency errors are logged internally but are not included in the response.
 
-## Auth Probe
-
-```http
-POST /v1/auth/verify
-Authorization: Bearer <minecraft_access_token>
-```
-
-Response:
-
-```json
-{
-  "profileId": "uuid",
-  "name": "PlayerName"
-}
-```
-
-The backend currently verifies identity directly for each operation that needs a Minecraft token. It does not issue a
-NetherLink account session token yet. The backend must not persist or log the Minecraft token.
-
 ## Create Runtime Instance
 
 ```http
@@ -69,19 +50,19 @@ Authorization: Bearer <minecraft_access_token>
 Content-Type: application/json
 
 {
-  "pmid": "optional-official-pmid",
   "displayText": "Minecraft Java instance"
 }
 ```
 
-The backend validates the Minecraft token, discards it, creates a fresh runtime Presence entry with `status=ONLINE`,
-and returns a private token for this game process.
+The backend validates the Minecraft token once, discards it, creates a fresh runtime Presence entry with
+`status=ONLINE`, and returns the verified identity plus a private token for this game process.
 
 Response:
 
 ```json
 {
   "profileId": "uuid",
+  "name": "PlayerName",
   "presenceId": "public-presence-id",
   "instanceToken": "private-runtime-token",
   "expiresAt": "2026-06-01T15:04:05Z"
@@ -93,6 +74,8 @@ used for Presence updates and the signaling WebSocket.
 
 Instance token requirements:
 
+- A Minecraft profile may have at most five active runtime instances. A sixth registration returns
+  `409 INSTANCE_LIMIT_REACHED`.
 - Token TTL should be short, initially 15 to 30 minutes.
 - The client should renew the runtime instance before token expiry.
 - The token must bind `profileId` and `presenceId`.
@@ -121,11 +104,23 @@ Response:
 Renewal should rotate the token. The old token should be invalidated immediately if opaque tokens are used. If stateless
 tokens are used, keep the old token lifetime short and optionally maintain a small Redis revocation set until expiry.
 
+## Close Runtime Instance
+
+```http
+DELETE /v1/instances/current
+Authorization: Bearer <instance_token>
+```
+
+Returns `204 No Content`. The operation atomically invalidates the runtime token and removes its Presence, closes the
+corresponding signaling WebSocket, and deletes every signaling session involving that `presenceId`. The same token is
+invalid after a successful close, so a repeated request with it returns `401 INVALID_INSTANCE_TOKEN`. Closing or expiry
+releases one of the profile's five runtime-instance slots.
+
 ## Friend Snapshot
 
 ```http
 GET /v1/friends
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 ```
 
 Response:
@@ -144,11 +139,14 @@ Response:
 }
 ```
 
+The backend resolves display names from the Minecraft profile service. `name` is `null` when a stored profile no longer
+resolves, while the UUID and relationship remain available.
+
 ## Add Friend
 
 ```http
 POST /v1/friends/requests
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 Content-Type: application/json
 
 {
@@ -156,17 +154,22 @@ Content-Type: application/json
 }
 ```
 
-The backend should resolve the target profile UUID by name. This creates a NetherLink request even if Mojang refuses the
-official add operation.
+The backend resolves the target profile UUID by name. Names must contain 3 to 16 ASCII letters, digits, or underscores.
+This creates a NetherLink request without attempting an official friend operation. Sending a reciprocal request accepts
+the pending request immediately.
 
 Response:
 
 ```json
 {
   "result": "SUCCESS",
+  "relationship": "REQUESTED",
   "officialSync": "SKIPPED"
 }
 ```
+
+`relationship` is `REQUESTED` for a newly pending request and `ACCEPTED` when a reciprocal request completes the
+friendship. Requests targeting the caller are rejected, and adding an existing friend returns `409 Conflict`.
 
 `officialSync` values:
 
@@ -179,29 +182,41 @@ Response:
 
 ```http
 POST /v1/friends/{profileId}/accept
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 ```
 
-Creates a NetherLink friendship. Optionally attempts official synchronization if supported.
+Creates a NetherLink friendship from an incoming request. A missing incoming request returns `404 Not Found`.
+
+Response:
+
+```json
+{
+  "result": "SUCCESS",
+  "relationship": "ACCEPTED",
+  "officialSync": "SKIPPED"
+}
+```
 
 ## Decline Or Revoke Request
 
 ```http
 DELETE /v1/friends/requests/{profileId}
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 ```
 
-Deletes the pending NetherLink request involving the caller and target.
+Deletes the pending NetherLink request involving the caller and target. Returns `204 No Content` and is idempotent.
 
 ## Remove Friend
 
 ```http
 DELETE /v1/friends/{profileId}
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 ```
 
-Deletes the NetherLink friendship. If official friend removal is still allowed, call the official API as best effort and
-report the result.
+Deletes the NetherLink friendship. Returns `204 No Content` and is idempotent. Official friend synchronization is not
+currently attempted.
+
+Friend request, acceptance, decline, revoke, and removal operations share a limit of 10 attempts per caller per minute.
 
 ## Publish Presence
 
@@ -241,6 +256,10 @@ Presence update rules:
 - `displayText` is display-only and should be sanitized before storing.
 - `joinable=true` should be allowed only for statuses that the server accepts as host-capable, initially `HOSTING`.
 - Updating Presence should refresh the Redis TTL.
+- `OFFLINE` is rejected by this endpoint; clients should use `DELETE /v1/presence` instead.
+- Presence publishing is limited to one successful publish attempt per runtime instance every 10 seconds.
+- `sessionId` is limited to 128 characters and `endpoint` to 512 characters. Control characters are rejected.
+- If `displayText` is omitted, the existing value is retained. If no Presence exists, the generic fallback is used.
 
 ## Clear Presence
 
@@ -251,11 +270,13 @@ Authorization: Bearer <instance_token>
 
 Sets the Presence associated with this instance token to `OFFLINE` or removes it.
 
+Returns `204 No Content`. The operation is idempotent while the runtime instance token remains valid.
+
 ## Friend Presence
 
 ```http
 GET /v1/friends/presence
-Authorization: Bearer <token>
+Authorization: Bearer <instance_token>
 ```
 
 Response:
@@ -266,7 +287,6 @@ Response:
     {
       "profileId": "uuid",
       "presenceId": "public-presence-id",
-      "pmid": "optional-official-pmid",
       "status": "HOSTING",
       "joinable": true,
       "sessionId": "host-session-id",
@@ -280,3 +300,5 @@ Response:
 
 Only return Presence for profiles that are friends with the caller. If a friend has multiple active `presence_id`
 records, return multiple list entries. The client should display those as separate join targets under the same account.
+The caller's own Presence and pending friend requests are not included. Expired entries are removed from the Redis
+profile index while the snapshot is assembled.

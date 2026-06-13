@@ -7,7 +7,6 @@ use uuid::Uuid;
 pub struct RuntimeInstance {
     pub profile_id: Uuid,
     pub presence_id: String,
-    pub pmid: Option<String>,
     pub instance_started_at: DateTime<Utc>,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -29,7 +28,6 @@ mod tests {
         let instance = RuntimeInstance {
             profile_id: Uuid::new_v4(),
             presence_id: "presence".to_owned(),
-            pmid: None,
             instance_started_at: now,
             issued_at: now,
             expires_at: now + chrono::Duration::seconds(30),
@@ -46,7 +44,6 @@ mod tests {
         let instance = RuntimeInstance {
             profile_id: Uuid::new_v4(),
             presence_id: "presence".to_owned(),
-            pmid: Some("pmid".to_owned()),
             instance_started_at: now,
             issued_at: now,
             expires_at: now,

@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 #[tokio::test]
 #[ignore = "requires local PostgreSQL and Redis servers"]
-async fn auth_verify_maps_minecraft_identity_and_errors() -> Result<()> {
+async fn instance_registration_maps_minecraft_identity_and_errors() -> Result<()> {
     dotenvy::dotenv().ok();
     let minecraft_listener = TcpListener::bind("127.0.0.1:0").await?;
     let minecraft_address = minecraft_listener.local_addr()?;
@@ -51,33 +51,38 @@ async fn auth_verify_maps_minecraft_identity_and_errors() -> Result<()> {
         format!("http://{minecraft_address}/minecraft/profile").parse()?;
     let database = db::connect(&env::var("DATABASE_URL")?).await?;
     let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
-    let state = AppState::with_http_client(config, database, redis, reqwest::Client::new());
+    let state = AppState::with_http_client(config, database, redis.clone(), reqwest::Client::new());
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let server = tokio::spawn(async move { axum::serve(listener, router(state)).await });
     let client = reqwest::Client::new();
 
     let response = client
-        .post(format!("http://{address}/v1/auth/verify"))
+        .post(format!("http://{address}/v1/instances"))
         .bearer_auth("valid-token")
+        .json(&json!({}))
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let body: Value = response.json().await?;
     assert_eq!(body["profileId"], "069a79f4-44e9-4726-a5be-fca90e38aaf5");
     assert_eq!(body["name"], "Notch");
-    assert!(body.get("sessionToken").is_none());
+    assert!(body["presenceId"].is_string());
+    assert!(body["instanceToken"].is_string());
+    let instance_token = body["instanceToken"].as_str().unwrap();
 
     let response = client
-        .post(format!("http://{address}/v1/auth/verify"))
+        .post(format!("http://{address}/v1/instances"))
+        .json(&json!({}))
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
     assert_eq!(response.json::<Value>().await?["code"], "UNAUTHORIZED");
 
     let response = client
-        .post(format!("http://{address}/v1/auth/verify"))
+        .post(format!("http://{address}/v1/instances"))
         .bearer_auth("invalid-token")
+        .json(&json!({}))
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
@@ -87,8 +92,9 @@ async fn auth_verify_maps_minecraft_identity_and_errors() -> Result<()> {
     );
 
     let response = client
-        .post(format!("http://{address}/v1/auth/verify"))
+        .post(format!("http://{address}/v1/instances"))
         .bearer_auth("upstream-error")
+        .json(&json!({}))
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
@@ -96,6 +102,13 @@ async fn auth_verify_maps_minecraft_identity_and_errors() -> Result<()> {
         response.json::<Value>().await?["code"],
         "SERVICE_UNAVAILABLE"
     );
+
+    let response = client
+        .delete(format!("http://{address}/v1/instances/current"))
+        .bearer_auth(instance_token)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
 
     server.abort();
     minecraft_server.abort();

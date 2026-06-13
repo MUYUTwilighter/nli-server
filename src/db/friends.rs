@@ -251,7 +251,7 @@ async fn request_rows(pool: &PgPool, column: &str, profile_id: Uuid) -> Result<V
         ORDER BY created_at
         "#
     );
-    let rows = sqlx::query_as::<_, FriendRequestRow>(&query)
+    let rows = sqlx::query_as::<_, FriendRequestRow>(sqlx::AssertSqlSafe(query))
         .bind(profile_id)
         .fetch_all(pool)
         .await?;

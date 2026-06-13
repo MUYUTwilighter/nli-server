@@ -1,5 +1,35 @@
 use std::fmt;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::{TryRng, rngs::SysRng};
+use secrecy::{ExposeSecret, SecretString};
+
+pub struct RuntimeInstanceToken(SecretString);
+
+impl RuntimeInstanceToken {
+    pub fn generate() -> Self {
+        let mut bytes = [0_u8; 32];
+        SysRng
+            .try_fill_bytes(&mut bytes)
+            .expect("operating system random source is unavailable");
+        Self(SecretString::from(URL_SAFE_NO_PAD.encode(bytes)))
+    }
+
+    pub fn expose_secret(&self) -> &str {
+        self.0.expose_secret()
+    }
+
+    pub fn hash(&self) -> RuntimeTokenHash {
+        RuntimeTokenHash::from_token(self.expose_secret())
+    }
+}
+
+impl fmt::Debug for RuntimeInstanceToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RuntimeInstanceToken([REDACTED])")
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct RuntimeTokenHash(String);
 
@@ -28,5 +58,23 @@ mod tests {
         let hash = RuntimeTokenHash::from_token("private-token");
         assert_ne!(hash.as_str(), "private-token");
         assert_eq!(format!("{hash:?}"), "RuntimeTokenHash([REDACTED])");
+    }
+
+    #[test]
+    fn generates_url_safe_random_tokens() {
+        let first = RuntimeInstanceToken::generate();
+        let second = RuntimeInstanceToken::generate();
+
+        assert_ne!(first.expose_secret(), second.expose_secret());
+        assert_eq!(first.expose_secret().len(), 43);
+        assert!(
+            first
+                .expose_secret()
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || character == '-'
+                    || character == '_')
+        );
+        assert_eq!(format!("{first:?}"), "RuntimeInstanceToken([REDACTED])");
     }
 }

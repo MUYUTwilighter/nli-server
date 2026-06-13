@@ -30,7 +30,6 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
     let instance = RuntimeInstance {
         profile_id,
         presence_id: presence_id.clone(),
-        pmid: None,
         instance_started_at: now,
         issued_at: now,
         expires_at: now + ChronoDuration::seconds(30),
@@ -55,7 +54,6 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
     let presence = Presence {
         profile_id,
         presence_id: presence_id.clone(),
-        pmid: None,
         status: PresenceStatus::Hosting,
         joinable: true,
         session_id: Some(format!("host-session-{test_id}")),
@@ -87,6 +85,7 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
             profile_id: Uuid::new_v4(),
             presence_id: format!("test-target-{test_id}"),
         },
+        join_accepted: false,
         offer_sent: false,
         answer_sent: false,
         initiator_ice_candidates: 0,
@@ -97,8 +96,16 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
     store.put_signaling_session(&signaling_session, ttl).await?;
     assert_eq!(
         store.signaling_session(&signaling_session_id).await?,
-        Some(signaling_session)
+        Some(signaling_session.clone())
     );
+
+    assert_eq!(
+        store
+            .delete_signaling_sessions_for_presence(&presence_id)
+            .await?,
+        1
+    );
+    assert_eq!(store.signaling_session(&signaling_session_id).await?, None);
 
     let nonce_namespace = format!("test-{test_id}");
     store.put_nonce(&nonce_namespace, "nonce", ttl).await?;
@@ -120,7 +127,7 @@ async fn redis_runtime_models_round_trip() -> Result<()> {
     );
 
     assert!(
-        store
+        !store
             .delete_signaling_session(&signaling_session_id)
             .await?
     );

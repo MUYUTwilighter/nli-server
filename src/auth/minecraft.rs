@@ -10,6 +10,72 @@ pub struct MinecraftAuthClient {
     profile_url: Url,
 }
 
+#[derive(Clone)]
+pub struct MinecraftProfileClient {
+    http: Client,
+    profile_by_name_base_url: Url,
+    profile_by_id_base_url: Url,
+}
+
+impl MinecraftProfileClient {
+    pub fn new(http: Client, profile_by_name_base_url: Url, profile_by_id_base_url: Url) -> Self {
+        Self {
+            http,
+            profile_by_name_base_url,
+            profile_by_id_base_url,
+        }
+    }
+
+    pub async fn lookup_by_name(
+        &self,
+        name: &str,
+    ) -> Result<ProfileIdentity, MinecraftProfileError> {
+        let url = self
+            .profile_by_name_base_url
+            .join(name)
+            .map_err(|error| MinecraftProfileError::InvalidLookupUrl(error.to_string()))?;
+        self.lookup(url).await
+    }
+
+    pub async fn lookup_by_id(
+        &self,
+        profile_id: Uuid,
+    ) -> Result<ProfileIdentity, MinecraftProfileError> {
+        let url = self
+            .profile_by_id_base_url
+            .join(&profile_id.simple().to_string())
+            .map_err(|error| MinecraftProfileError::InvalidLookupUrl(error.to_string()))?;
+        self.lookup(url).await
+    }
+
+    async fn lookup(&self, url: Url) -> Result<ProfileIdentity, MinecraftProfileError> {
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(MinecraftProfileError::Request)?;
+        match response.status() {
+            StatusCode::OK => {}
+            StatusCode::NO_CONTENT | StatusCode::NOT_FOUND => {
+                return Err(MinecraftProfileError::NotFound);
+            }
+            status => return Err(MinecraftProfileError::UpstreamStatus(status)),
+        }
+
+        let profile = response
+            .json::<MinecraftProfileResponse>()
+            .await
+            .map_err(MinecraftProfileError::InvalidResponse)?;
+        let profile_id = Uuid::parse_str(&profile.id)
+            .map_err(|_| MinecraftProfileError::InvalidProfileId(profile.id))?;
+        Ok(ProfileIdentity {
+            profile_id,
+            name: profile.name,
+        })
+    }
+}
+
 impl MinecraftAuthClient {
     pub fn new(http: Client, profile_url: Url) -> Self {
         Self { http, profile_url }
@@ -71,6 +137,22 @@ pub enum MinecraftAuthError {
     #[error("Minecraft authentication service returned an invalid response")]
     InvalidResponse(#[source] reqwest::Error),
     #[error("Minecraft authentication service returned an invalid profile id")]
+    InvalidProfileId(String),
+}
+
+#[derive(Debug, Error)]
+pub enum MinecraftProfileError {
+    #[error("Minecraft player was not found")]
+    NotFound,
+    #[error("Minecraft profile lookup URL is invalid")]
+    InvalidLookupUrl(String),
+    #[error("Minecraft profile lookup request failed")]
+    Request(#[source] reqwest::Error),
+    #[error("Minecraft profile service returned {0}")]
+    UpstreamStatus(StatusCode),
+    #[error("Minecraft profile service returned an invalid response")]
+    InvalidResponse(#[source] reqwest::Error),
+    #[error("Minecraft profile service returned an invalid profile id")]
     InvalidProfileId(String),
 }
 

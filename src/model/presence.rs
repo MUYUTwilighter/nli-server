@@ -16,7 +16,6 @@ pub enum PresenceStatus {
 pub struct Presence {
     pub profile_id: Uuid,
     pub presence_id: String,
-    pub pmid: Option<String>,
     pub status: PresenceStatus,
     pub joinable: bool,
     pub session_id: Option<String>,
@@ -42,7 +41,6 @@ mod tests {
         let mut presence = Presence {
             profile_id: Uuid::new_v4(),
             presence_id: Uuid::new_v4().to_string(),
-            pmid: None,
             status: PresenceStatus::Online,
             joinable: true,
             session_id: None,
@@ -82,7 +80,6 @@ mod tests {
         let presence = Presence {
             profile_id: Uuid::new_v4(),
             presence_id: "presence-id".to_owned(),
-            pmid: Some("pmid".to_owned()),
             status: PresenceStatus::Hosting,
             joinable: true,
             session_id: Some("session-id".to_owned()),

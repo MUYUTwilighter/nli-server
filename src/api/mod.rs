@@ -1,6 +1,11 @@
 mod auth;
 mod error;
+mod friends;
 mod health;
+mod instances;
+mod presence;
+mod signaling;
+mod turn;
 
 use std::time::Duration;
 
@@ -8,7 +13,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderName, Method},
-    routing::{get, post},
+    routing::{delete, get, post, put},
 };
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -29,7 +34,27 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         .route("/health", get(health::health))
-        .route("/v1/auth/verify", post(auth::verify))
+        .route("/v1/instances", post(instances::create))
+        .route("/v1/instances/renew", post(instances::renew))
+        .route("/v1/instances/current", delete(instances::close))
+        .route("/v1/friends", get(friends::snapshot))
+        .route("/v1/friends/presence", get(friends::presence))
+        .route("/v1/friends/requests", post(friends::add_request))
+        .route(
+            "/v1/friends/{profile_id}/accept",
+            post(friends::accept_request),
+        )
+        .route(
+            "/v1/friends/requests/{profile_id}",
+            delete(friends::delete_request),
+        )
+        .route("/v1/friends/{profile_id}", delete(friends::remove_friend))
+        .route(
+            "/v1/presence",
+            put(presence::publish).delete(presence::clear),
+        )
+        .route("/v1/signaling/ws", get(signaling::connect))
+        .route("/v1/turn", post(turn::credentials))
         .fallback(error::not_found)
         .with_state(state)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))

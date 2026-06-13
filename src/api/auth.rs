@@ -1,37 +1,23 @@
-use axum::{Json, extract::State, http::HeaderMap};
-use serde::Serialize;
+use axum::http::HeaderMap;
 use tracing::warn;
-use uuid::Uuid;
 
 use crate::{
-    auth::{BearerTokenError, MinecraftAuthError, bearer_token},
+    auth::{BearerTokenError, MinecraftAuthError, ProfileIdentity, bearer_token},
     state::AppState,
 };
 
 use super::ApiError;
 
-pub async fn verify(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AuthVerifyResponse>, ApiError> {
-    let access_token = bearer_token(&headers).map_err(map_bearer_error)?;
-    let identity = state
+pub(super) async fn authenticate_minecraft(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<ProfileIdentity, ApiError> {
+    let access_token = bearer_token(headers).map_err(map_bearer_error)?;
+    state
         .minecraft_auth
         .verify(&access_token)
         .await
-        .map_err(map_minecraft_error)?;
-
-    Ok(Json(AuthVerifyResponse {
-        profile_id: identity.profile_id,
-        name: identity.name,
-    }))
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthVerifyResponse {
-    profile_id: Uuid,
-    name: String,
+        .map_err(map_minecraft_error)
 }
 
 fn map_bearer_error(error: BearerTokenError) -> ApiError {

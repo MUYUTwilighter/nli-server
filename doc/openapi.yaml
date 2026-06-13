@@ -1,0 +1,668 @@
+openapi: 3.1.0
+info:
+  title: NetherLink Server API
+  version: 0.1.0
+  description: |
+    REST API for NetherLink Minecraft Java P2P multiplayer.
+
+    Minecraft access tokens are verified once during runtime instance registration and are never persisted.
+    Runtime instance tokens are short-lived opaque credentials backed by Redis.
+    The WebSocket signaling protocol is documented separately in signaling-api.md.
+  license:
+    name: See repository LICENSE
+  contact:
+    name: MUYU_Twilighter
+    url: https://muyucloud.cool/
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Runtime Instances
+  - name: Friends
+  - name: Presence
+  - name: TURN
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Check service dependencies
+      security: []
+      responses:
+        "200":
+          description: PostgreSQL and Redis are healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: At least one dependency is unhealthy or timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/instances:
+    post:
+      tags: [Runtime Instances]
+      operationId: createRuntimeInstance
+      summary: Create a runtime game instance
+      security:
+        - minecraftAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInstanceRequest"
+      responses:
+        "200":
+          description: Runtime instance and private instance token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterInstanceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/MinecraftUnauthorized"
+        "409":
+          description: The Minecraft profile already has five active runtime instances.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/instances/renew:
+    post:
+      tags: [Runtime Instances]
+      operationId: renewRuntimeInstance
+      summary: Rotate and renew a runtime instance token
+      security:
+        - instanceToken: []
+      responses:
+        "200":
+          description: Renewed instance with a new token. The previous token is invalidated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceResponse"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/instances/current:
+    delete:
+      tags: [Runtime Instances]
+      operationId: closeRuntimeInstance
+      summary: Close the current runtime instance
+      description: Invalidates the token and removes Presence, WebSocket connection, and signaling sessions.
+      security:
+        - instanceToken: []
+      responses:
+        "204":
+          description: Runtime instance closed.
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends:
+    get:
+      tags: [Friends]
+      operationId: getFriendSnapshot
+      summary: Get friends and pending requests
+      security:
+        - instanceToken: []
+      responses:
+        "200":
+          description: Current NetherLink friend graph snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendSnapshotResponse"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends/presence:
+    get:
+      tags: [Friends, Presence]
+      operationId: getFriendPresence
+      summary: Get active Presence entries for friends
+      security:
+        - instanceToken: []
+      responses:
+        "200":
+          description: Active Presence entries belonging to established friends.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendPresenceResponse"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends/requests:
+    post:
+      tags: [Friends]
+      operationId: createFriendRequest
+      summary: Send a friend request by Minecraft player name
+      description: A reciprocal pending request is accepted immediately.
+      security:
+        - instanceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddFriendRequest"
+      responses:
+        "200":
+          description: Request created or reciprocal request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "404":
+          description: Minecraft player was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The players are already friends.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends/{profileId}/accept:
+    post:
+      tags: [Friends]
+      operationId: acceptFriendRequest
+      summary: Accept an incoming friend request
+      security:
+        - instanceToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Friendship created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "404":
+          description: Incoming friend request was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends/requests/{profileId}:
+    delete:
+      tags: [Friends]
+      operationId: deleteFriendRequest
+      summary: Decline or revoke a friend request
+      security:
+        - instanceToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "204":
+          description: Pending request removed or already absent.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/friends/{profileId}:
+    delete:
+      tags: [Friends]
+      operationId: removeFriend
+      summary: Remove a NetherLink friendship
+      security:
+        - instanceToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "204":
+          description: Friendship removed or already absent.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/presence:
+    put:
+      tags: [Presence]
+      operationId: publishPresence
+      summary: Publish or refresh Presence
+      security:
+        - instanceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishPresenceRequest"
+      responses:
+        "200":
+          description: Presence stored with a refreshed TTL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishPresenceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    delete:
+      tags: [Presence]
+      operationId: clearPresence
+      summary: Remove the current instance Presence
+      security:
+        - instanceToken: []
+      responses:
+        "204":
+          description: Presence removed or already absent.
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/turn:
+    post:
+      tags: [TURN]
+      operationId: createTurnCredentials
+      summary: Issue temporary coturn credentials
+      security:
+        - instanceToken: []
+      responses:
+        "200":
+          description: Temporary ICE server configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnCredentialsResponse"
+        "401":
+          $ref: "#/components/responses/InstanceUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  securitySchemes:
+    minecraftAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Minecraft access token
+      description: Minecraft access token verified with Minecraft Services. Never persisted by this service.
+    instanceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: NetherLink runtime instance token
+      description: Short-lived opaque token returned by POST /v1/instances.
+
+  parameters:
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      description: Minecraft profile UUID.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    MinecraftUnauthorized:
+      description: Missing, malformed, or invalid Minecraft access token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InstanceUnauthorized:
+      description: Missing, malformed, expired, rotated, or closed runtime instance token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: Request rate limit exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: An upstream service returned an invalid response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: A required upstream service or storage dependency is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [INVALID_INSTANCE_TOKEN]
+        message:
+          type: string
+
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        dependencies:
+          type: object
+          additionalProperties: false
+          required: [postgres, redis]
+          properties:
+            postgres:
+              $ref: "#/components/schemas/DependencyHealth"
+            redis:
+              $ref: "#/components/schemas/DependencyHealth"
+
+    DependencyHealth:
+      type: object
+      additionalProperties: false
+      required: [healthy, latencyMs]
+      properties:
+        healthy:
+          type: boolean
+        latencyMs:
+          type: integer
+          minimum: 0
+
+    CreateInstanceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayText:
+          type: [string, "null"]
+          maxLength: 96
+
+    InstanceResponse:
+      type: object
+      additionalProperties: false
+      required: [profileId, presenceId, instanceToken, expiresAt]
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        presenceId:
+          type: string
+        instanceToken:
+          type: string
+          description: Private runtime credential. Do not log or share it.
+        expiresAt:
+          type: string
+          format: date-time
+
+    RegisterInstanceResponse:
+      type: object
+      additionalProperties: false
+      required: [profileId, name, presenceId, instanceToken, expiresAt]
+      example:
+        profileId: "8667ba71-b85a-4004-af54-457a9734eed7"
+        name: "PlayerName"
+        presenceId: "f10cf850-47f6-4f8f-93a2-cfc176ed1842"
+        instanceToken: "private-runtime-token"
+        expiresAt: "2026-06-13T12:30:00Z"
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        presenceId:
+          type: string
+        instanceToken:
+          type: string
+          description: Private runtime credential. Do not log or share it.
+        expiresAt:
+          type: string
+          format: date-time
+
+    AddFriendRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9_]{3,16}$"
+
+    FriendSnapshotResponse:
+      type: object
+      additionalProperties: false
+      required: [friends, incomingRequests, outgoingRequests]
+      properties:
+        friends:
+          type: array
+          items:
+            $ref: "#/components/schemas/Friend"
+        incomingRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/FriendRequest"
+        outgoingRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/FriendRequest"
+
+    Friend:
+      type: object
+      additionalProperties: false
+      required: [profileId, name, source]
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        source:
+          $ref: "#/components/schemas/FriendSource"
+
+    FriendRequest:
+      type: object
+      additionalProperties: false
+      required: [profileId, name, source]
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        source:
+          $ref: "#/components/schemas/FriendSource"
+
+    FriendSource:
+      type: string
+      enum: [netherlink, minecraft_import, minecraft_sync]
+
+    FriendMutationResponse:
+      type: object
+      additionalProperties: false
+      required: [result, relationship, officialSync]
+      properties:
+        result:
+          type: string
+          const: SUCCESS
+        relationship:
+          type: string
+          enum: [REQUESTED, ACCEPTED]
+        officialSync:
+          type: string
+          const: SKIPPED
+
+    FriendPresenceResponse:
+      type: object
+      additionalProperties: false
+      required: [statuses]
+      properties:
+        statuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Presence"
+
+    Presence:
+      type: object
+      additionalProperties: false
+      required:
+        - profileId
+        - presenceId
+        - status
+        - joinable
+        - sessionId
+        - endpoint
+        - displayText
+        - updatedAt
+        - expiresAt
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        presenceId:
+          type: string
+        status:
+          $ref: "#/components/schemas/PresenceStatus"
+        joinable:
+          type: boolean
+        sessionId:
+          type: [string, "null"]
+        endpoint:
+          type: [string, "null"]
+        displayText:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    PresenceStatus:
+      type: string
+      enum: [OFFLINE, ONLINE, IN_GAME, HOSTING]
+
+    PublishPresenceRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ONLINE, IN_GAME, HOSTING]
+        joinable:
+          type: boolean
+          default: false
+          description: May only be true when status is HOSTING.
+        sessionId:
+          type: [string, "null"]
+          maxLength: 128
+        endpoint:
+          type: [string, "null"]
+          maxLength: 512
+        ttlSeconds:
+          type: [integer, "null"]
+          minimum: 0
+          description: The server clamps this value to 30 through 180 seconds.
+        displayText:
+          type: [string, "null"]
+          maxLength: 96
+
+    PublishPresenceResponse:
+      type: object
+      additionalProperties: false
+      required: [result, profileId, presenceId, expiresAt]
+      properties:
+        result:
+          type: string
+          const: SUCCESS
+        profileId:
+          type: string
+          format: uuid
+        presenceId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    TurnCredentialsResponse:
+      type: object
+      additionalProperties: false
+      required: [urls, username, credential, expiresAt]
+      properties:
+        urls:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: "^(stun|stuns|turn|turns):"
+        username:
+          type: string
+        credential:
+          type: string
+          writeOnly: true
+          description: Temporary coturn credential. Do not log or persist it.
+        expiresAt:
+          type: string
+          format: date-time

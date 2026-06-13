@@ -68,9 +68,64 @@ impl RedisStore {
             .set_ex(instance_key(token_hash.as_str()), payload, ttl.as_secs())
             .ignore()
             .set_ex(reverse_key, token_hash.as_str(), ttl.as_secs())
+            .ignore()
+            .zadd(
+                profile_instances_key(instance.profile_id),
+                &instance.presence_id,
+                instance.expires_at.timestamp(),
+            )
+            .ignore()
+            .expire(
+                profile_instances_key(instance.profile_id),
+                seconds_as_i64(ttl.as_secs().saturating_add(60))?,
+            )
             .ignore();
         pipeline.query_async::<()>(&mut connection).await?;
         Ok(())
+    }
+
+    pub async fn register_runtime_instance(
+        &self,
+        token_hash: &RuntimeTokenHash,
+        instance: &RuntimeInstance,
+        ttl: Duration,
+        max_instances: usize,
+    ) -> Result<bool> {
+        ensure_ttl(ttl)?;
+        let mut connection = self.connection.clone();
+        let script = redis::Script::new(
+            r#"
+            redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[5])
+            if redis.call('ZCARD', KEYS[3]) >= tonumber(ARGV[7]) then
+                return 0
+            end
+            local previous = redis.call('GET', KEYS[2])
+            if previous and previous ~= ARGV[2] then
+                redis.call('DEL', ARGV[8] .. previous)
+            end
+            redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
+            redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+            redis.call('ZADD', KEYS[3], ARGV[4], ARGV[6])
+            redis.call('EXPIRE', KEYS[3], ARGV[9])
+            return 1
+            "#,
+        );
+        let registered = script
+            .key(instance_key(token_hash.as_str()))
+            .key(presence_instance_key(&instance.presence_id))
+            .key(profile_instances_key(instance.profile_id))
+            .arg(serialize(instance)?)
+            .arg(token_hash.as_str())
+            .arg(ttl.as_secs())
+            .arg(instance.expires_at.timestamp())
+            .arg(Utc::now().timestamp())
+            .arg(&instance.presence_id)
+            .arg(max_instances)
+            .arg(format!("{KEY_PREFIX}:instance:"))
+            .arg(ttl.as_secs().saturating_add(60))
+            .invoke_async::<u8>(&mut connection)
+            .await?;
+        Ok(registered == 1)
     }
 
     pub async fn runtime_instance(
@@ -78,6 +133,46 @@ impl RedisStore {
         token_hash: &RuntimeTokenHash,
     ) -> Result<Option<RuntimeInstance>> {
         self.get_json(&instance_key(token_hash.as_str())).await
+    }
+
+    pub async fn rotate_runtime_instance(
+        &self,
+        old_token_hash: &RuntimeTokenHash,
+        new_token_hash: &RuntimeTokenHash,
+        instance: &RuntimeInstance,
+        ttl: Duration,
+    ) -> Result<bool> {
+        ensure_ttl(ttl)?;
+        let mut connection = self.connection.clone();
+        let script = redis::Script::new(
+            r#"
+            local current = redis.call('GET', KEYS[1])
+            if current ~= ARGV[1] then
+                return 0
+            end
+            redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4])
+            redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[4])
+            redis.call('ZADD', KEYS[4], ARGV[5], ARGV[6])
+            redis.call('EXPIRE', KEYS[4], ARGV[7])
+            redis.call('DEL', KEYS[3])
+            return 1
+            "#,
+        );
+        let rotated = script
+            .key(presence_instance_key(&instance.presence_id))
+            .key(instance_key(new_token_hash.as_str()))
+            .key(instance_key(old_token_hash.as_str()))
+            .key(profile_instances_key(instance.profile_id))
+            .arg(old_token_hash.as_str())
+            .arg(new_token_hash.as_str())
+            .arg(serialize(instance)?)
+            .arg(ttl.as_secs())
+            .arg(instance.expires_at.timestamp())
+            .arg(&instance.presence_id)
+            .arg(ttl.as_secs().saturating_add(60))
+            .invoke_async::<u8>(&mut connection)
+            .await?;
+        Ok(rotated == 1)
     }
 
     pub async fn delete_runtime_instance(&self, token_hash: &RuntimeTokenHash) -> Result<bool> {
@@ -91,9 +186,45 @@ impl RedisStore {
             .del(instance_key(token_hash.as_str()))
             .ignore()
             .del(presence_instance_key(&instance.presence_id))
+            .ignore()
+            .zrem(
+                profile_instances_key(instance.profile_id),
+                &instance.presence_id,
+            )
             .ignore();
         pipeline.query_async::<()>(&mut connection).await?;
         Ok(true)
+    }
+
+    pub async fn close_runtime_instance(
+        &self,
+        token_hash: &RuntimeTokenHash,
+        instance: &RuntimeInstance,
+    ) -> Result<bool> {
+        let mut connection = self.connection.clone();
+        let script = redis::Script::new(
+            r#"
+            local current = redis.call('GET', KEYS[2])
+            if current ~= ARGV[1] then
+                return 0
+            end
+            redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+            redis.call('ZREM', KEYS[4], ARGV[2])
+            redis.call('ZREM', KEYS[5], ARGV[2])
+            return 1
+            "#,
+        );
+        let deleted = script
+            .key(instance_key(token_hash.as_str()))
+            .key(presence_instance_key(&instance.presence_id))
+            .key(presence_key(&instance.presence_id))
+            .key(profile_presences_key(instance.profile_id))
+            .key(profile_instances_key(instance.profile_id))
+            .arg(token_hash.as_str())
+            .arg(&instance.presence_id)
+            .invoke_async::<u8>(&mut connection)
+            .await?;
+        Ok(deleted == 1)
     }
 
     pub async fn put_presence(&self, presence: &Presence, ttl: Duration) -> Result<Presence> {
@@ -175,8 +306,41 @@ impl RedisStore {
         session: &SignalingSession,
         ttl: Duration,
     ) -> Result<()> {
-        self.set_json(&signaling_session_key(&session.session_id), session, ttl)
-            .await
+        ensure_ttl(ttl)?;
+        let payload = serialize(session)?;
+        let index_ttl = ttl.as_secs().saturating_add(60);
+        let mut connection = self.connection.clone();
+        let mut pipeline = redis::pipe();
+        pipeline
+            .atomic()
+            .set_ex(
+                signaling_session_key(&session.session_id),
+                payload,
+                ttl.as_secs(),
+            )
+            .ignore()
+            .sadd(
+                presence_signaling_sessions_key(&session.initiator.presence_id),
+                &session.session_id,
+            )
+            .ignore()
+            .expire(
+                presence_signaling_sessions_key(&session.initiator.presence_id),
+                seconds_as_i64(index_ttl)?,
+            )
+            .ignore()
+            .sadd(
+                presence_signaling_sessions_key(&session.target.presence_id),
+                &session.session_id,
+            )
+            .ignore()
+            .expire(
+                presence_signaling_sessions_key(&session.target.presence_id),
+                seconds_as_i64(index_ttl)?,
+            )
+            .ignore();
+        pipeline.query_async::<()>(&mut connection).await?;
+        Ok(())
     }
 
     pub async fn signaling_session(&self, session_id: &str) -> Result<Option<SignalingSession>> {
@@ -184,9 +348,43 @@ impl RedisStore {
     }
 
     pub async fn delete_signaling_session(&self, session_id: &str) -> Result<bool> {
+        let session = self.signaling_session(session_id).await?;
         let mut connection = self.connection.clone();
-        let deleted: usize = connection.del(signaling_session_key(session_id)).await?;
+        let mut pipeline = redis::pipe();
+        pipeline
+            .atomic()
+            .del(signaling_session_key(session_id))
+            .ignore();
+        if let Some(session) = session {
+            pipeline
+                .srem(
+                    presence_signaling_sessions_key(&session.initiator.presence_id),
+                    session_id,
+                )
+                .ignore()
+                .srem(
+                    presence_signaling_sessions_key(&session.target.presence_id),
+                    session_id,
+                )
+                .ignore();
+        }
+        let deleted: usize = connection.exists(signaling_session_key(session_id)).await?;
+        pipeline.query_async::<()>(&mut connection).await?;
         Ok(deleted > 0)
+    }
+
+    pub async fn delete_signaling_sessions_for_presence(&self, presence_id: &str) -> Result<usize> {
+        let index_key = presence_signaling_sessions_key(presence_id);
+        let mut connection = self.connection.clone();
+        let session_ids: Vec<String> = connection.smembers(&index_key).await?;
+        let mut deleted = 0;
+        for session_id in session_ids {
+            if self.delete_signaling_session(&session_id).await? {
+                deleted += 1;
+            }
+        }
+        let _: usize = connection.del(index_key).await?;
+        Ok(deleted)
     }
 
     pub async fn put_nonce(&self, namespace: &str, nonce_hash: &str, ttl: Duration) -> Result<()> {
@@ -225,15 +423,6 @@ impl RedisStore {
             .arg(seconds_as_i64(window.as_secs())?)
             .invoke_async::<u64>(&mut connection)
             .await?)
-    }
-
-    async fn set_json<T: Serialize>(&self, key: &str, value: &T, ttl: Duration) -> Result<()> {
-        ensure_ttl(ttl)?;
-        let mut connection = self.connection.clone();
-        connection
-            .set_ex::<_, _, ()>(key, serialize(value)?, ttl.as_secs())
-            .await?;
-        Ok(())
     }
 
     async fn get_json<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
@@ -278,8 +467,16 @@ fn profile_presences_key(profile_id: Uuid) -> String {
     format!("{KEY_PREFIX}:profile-presences:{profile_id}")
 }
 
+fn profile_instances_key(profile_id: Uuid) -> String {
+    format!("{KEY_PREFIX}:profile-instances:{profile_id}")
+}
+
 fn signaling_session_key(session_id: &str) -> String {
     format!("{KEY_PREFIX}:signaling-session:{session_id}")
+}
+
+fn presence_signaling_sessions_key(presence_id: &str) -> String {
+    format!("{KEY_PREFIX}:presence-signaling-sessions:{presence_id}")
 }
 
 fn nonce_key(namespace: &str, nonce_hash: &str) -> String {
@@ -298,6 +495,10 @@ mod tests {
     fn uses_namespaced_keys() {
         assert_eq!(instance_key("hash"), "nli:instance:hash");
         assert_eq!(presence_key("id"), "nli:presence:id");
+        assert_eq!(
+            profile_instances_key(Uuid::nil()),
+            "nli:profile-instances:00000000-0000-0000-0000-000000000000"
+        );
         assert_eq!(
             signaling_session_key("session"),
             "nli:signaling-session:session"
