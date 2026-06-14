@@ -120,6 +120,7 @@ impl AppConfig {
                     anyhow::bail!("NLI_CORS_ALLOW_ORIGIN must use HTTPS in production");
                 }
             }
+            validate_production_turn_urls(&self.turn_urls)?;
         }
         Ok(())
     }
@@ -191,4 +192,74 @@ fn validate_turn_url(value: &str) -> Result<String> {
         anyhow::bail!("TURN_URLS contains an invalid STUN or TURN URL");
     }
     Ok(value.to_owned())
+}
+
+fn validate_production_turn_urls(urls: &[String]) -> Result<()> {
+    if !urls
+        .iter()
+        .any(|value| value.starts_with("turn:") || value.starts_with("turns:"))
+    {
+        anyhow::bail!("TURN_URLS must contain at least one TURN relay URL in production");
+    }
+    if urls.iter().any(|value| {
+        let host = turn_url_host(value);
+        host.eq_ignore_ascii_case("localhost")
+            || host == "127.0.0.1"
+            || host == "0.0.0.0"
+            || host == "::1"
+    }) {
+        anyhow::bail!("TURN_URLS must use client-reachable hosts in production");
+    }
+    Ok(())
+}
+
+fn turn_url_host(value: &str) -> &str {
+    let authority = value
+        .split_once(':')
+        .map(|(_, authority)| authority)
+        .unwrap_or_default()
+        .trim_start_matches("//");
+    if let Some(ipv6) = authority.strip_prefix('[') {
+        return ipv6.split(']').next().unwrap_or_default();
+    }
+    authority.split([':', '?']).next().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_turn_urls_require_a_relay() {
+        let error =
+            validate_production_turn_urls(&["stun:turn.example.com:3478".to_owned()]).unwrap_err();
+        assert!(error.to_string().contains("TURN relay URL"));
+    }
+
+    #[test]
+    fn production_turn_urls_reject_loopback_hosts() {
+        let error = validate_production_turn_urls(&[
+            "stun:127.0.0.1:3478".to_owned(),
+            "turn:127.0.0.1:3478?transport=udp".to_owned(),
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("client-reachable"));
+
+        let error = validate_production_turn_urls(&[
+            "stun:[::1]:3478".to_owned(),
+            "turn:[::1]:3478?transport=udp".to_owned(),
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("client-reachable"));
+    }
+
+    #[test]
+    fn production_turn_urls_accept_public_relay_urls() {
+        validate_production_turn_urls(&[
+            "stun:turn.example.com:3478".to_owned(),
+            "turn:turn.example.com:3478?transport=udp".to_owned(),
+            "turns:turn.example.com:5349?transport=tcp".to_owned(),
+        ])
+        .unwrap();
+    }
 }

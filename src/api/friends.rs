@@ -45,6 +45,8 @@ pub async fn snapshot(
     profile_ids.sort_unstable();
     profile_ids.dedup();
     let names = resolve_names(&state, profile_ids).await?;
+    let mut presences =
+        resolve_friend_presences(&state, &snapshot.friends, caller.profile_id).await?;
 
     Ok(Json(FriendSnapshotResponse {
         friends: snapshot
@@ -56,6 +58,7 @@ pub async fn snapshot(
                     profile_id,
                     name: names.get(&profile_id).cloned().flatten(),
                     source: friendship.source,
+                    presences: presences.remove(&profile_id).unwrap_or_default(),
                 }
             })
             .collect(),
@@ -70,35 +73,6 @@ pub async fn snapshot(
             .map(|request| request_response(request, false, &names))
             .collect(),
     }))
-}
-
-pub async fn presence(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<FriendPresenceResponse>, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
-    let snapshot = FriendRepository::new(state.db.clone())
-        .snapshot(caller.profile_id)
-        .await
-        .map_err(repository_error)?;
-    let mut statuses = Vec::new();
-    for friendship in &snapshot.friends {
-        let friend_profile_id = friend_profile_id(friendship, caller.profile_id);
-        statuses.extend(
-            state
-                .redis
-                .presences_for_profile(friend_profile_id)
-                .await
-                .map_err(redis_error)?,
-        );
-    }
-    statuses.sort_unstable_by(|left, right| {
-        left.profile_id
-            .cmp(&right.profile_id)
-            .then_with(|| left.presence_id.cmp(&right.presence_id))
-    });
-
-    Ok(Json(FriendPresenceResponse { statuses }))
 }
 
 pub async fn add_request(
@@ -220,16 +194,11 @@ pub struct FriendSnapshotResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FriendPresenceResponse {
-    statuses: Vec<Presence>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct FriendResponse {
     profile_id: Uuid,
     name: Option<String>,
     source: FriendSource,
+    presences: Vec<Presence>,
 }
 
 #[derive(Serialize)]
@@ -271,6 +240,25 @@ fn request_response(
         name: names.get(&profile_id).cloned().flatten(),
         source: request.source,
     }
+}
+
+async fn resolve_friend_presences(
+    state: &AppState,
+    friendships: &[Friendship],
+    caller_profile_id: Uuid,
+) -> Result<HashMap<Uuid, Vec<Presence>>, ApiError> {
+    let mut result = HashMap::with_capacity(friendships.len());
+    for friendship in friendships {
+        let profile_id = friend_profile_id(friendship, caller_profile_id);
+        let mut presences = state
+            .redis
+            .presences_for_profile(profile_id)
+            .await
+            .map_err(redis_error)?;
+        presences.sort_unstable_by(|left, right| left.presence_id.cmp(&right.presence_id));
+        result.insert(profile_id, presences);
+    }
+    Ok(result)
 }
 
 async fn resolve_names(

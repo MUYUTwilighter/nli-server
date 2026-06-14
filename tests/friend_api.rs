@@ -151,7 +151,7 @@ async fn friend_api_lifecycle() -> Result<()> {
     assert_eq!(snapshot_b["incomingRequests"][0]["name"], "PlayerA");
 
     let response = client
-        .post(format!("http://{address}/v1/friends/{player_a}/accept"))
+        .post(format!("http://{address}/v1/friends/request/{player_a}"))
         .bearer_auth(&player_b_instance)
         .send()
         .await?;
@@ -162,6 +162,10 @@ async fn friend_api_lifecycle() -> Result<()> {
     assert_eq!(snapshot_a["friends"][0]["profileId"], player_b.to_string());
     assert_eq!(snapshot_a["friends"][0]["name"], "PlayerB");
     assert_eq!(snapshot_a["friends"][0]["source"], "netherlink");
+    let initial_presences = snapshot_a["friends"][0]["presences"].as_array().unwrap();
+    assert_eq!(initial_presences.len(), 1);
+    assert_eq!(initial_presences[0]["profileId"], player_b.to_string());
+    assert_eq!(initial_presences[0]["status"], "ONLINE");
     assert_eq!(snapshot_a["incomingRequests"], json!([]));
     assert_eq!(snapshot_a["outgoingRequests"], json!([]));
 
@@ -179,25 +183,40 @@ async fn friend_api_lifecycle() -> Result<()> {
             Duration::from_secs(60),
         )
         .await?;
+    let body = friend_snapshot(&client, address, &player_a_instance).await?;
+    let presences = body["friends"][0]["presences"].as_array().unwrap();
+    assert_eq!(presences.len(), 2);
+    assert!(
+        presences
+            .iter()
+            .all(|presence| presence["profileId"] == player_b.to_string())
+    );
+    assert!(
+        presences
+            .iter()
+            .any(|presence| presence["presenceId"] == friend_presence_id)
+    );
+
     let response = client
         .get(format!("http://{address}/v1/friends/presence"))
         .bearer_auth(&player_a_instance)
         .send()
         .await?;
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body: Value = response.json().await?;
-    let statuses = body["statuses"].as_array().unwrap();
-    assert_eq!(statuses.len(), 2);
-    assert!(
-        statuses
-            .iter()
-            .all(|presence| presence["profileId"] == player_b.to_string())
-    );
-    assert!(
-        statuses
-            .iter()
-            .any(|presence| presence["presenceId"] == friend_presence_id)
-    );
+    assert_eq!(response.status(), reqwest::StatusCode::METHOD_NOT_ALLOWED);
+
+    let response = client
+        .post(format!("http://{address}/v1/friends/{player_a}/accept"))
+        .bearer_auth(&player_b_instance)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let response = client
+        .delete(format!("http://{address}/v1/friends/requests/{player_b}"))
+        .bearer_auth(&player_a_instance)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
 
     let response = client
         .post(format!("http://{address}/v1/friends/requests"))
@@ -225,7 +244,7 @@ async fn friend_api_lifecycle() -> Result<()> {
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let response = client
-        .delete(format!("http://{address}/v1/friends/requests/{player_b}"))
+        .delete(format!("http://{address}/v1/friends/request/{player_b}"))
         .bearer_auth(&player_a_instance)
         .send()
         .await?;

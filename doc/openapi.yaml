@@ -136,35 +136,16 @@ paths:
     get:
       tags: [Friends]
       operationId: getFriendSnapshot
-      summary: Get friends and pending requests
+      summary: Get friends, their active Presence entries, and pending requests
       security:
         - instanceToken: []
       responses:
         "200":
-          description: Current NetherLink friend graph snapshot.
+          description: Current friend graph with every active Presence grouped under its friend.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/FriendSnapshotResponse"
-        "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
-
-  /v1/friends/presence:
-    get:
-      tags: [Friends, Presence]
-      operationId: getFriendPresence
-      summary: Get active Presence entries for friends
-      security:
-        - instanceToken: []
-      responses:
-        "200":
-          description: Active Presence entries belonging to established friends.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FriendPresenceResponse"
         "401":
           $ref: "#/components/responses/InstanceUnauthorized"
         "503":
@@ -212,7 +193,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /v1/friends/{profileId}/accept:
+  /v1/friends/request/{profileId}:
     post:
       tags: [Friends]
       operationId: acceptFriendRequest
@@ -242,8 +223,6 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-
-  /v1/friends/requests/{profileId}:
     delete:
       tags: [Friends]
       operationId: deleteFriendRequest
@@ -538,7 +517,7 @@ components:
     Friend:
       type: object
       additionalProperties: false
-      required: [profileId, name, source]
+      required: [profileId, name, source, presences]
       properties:
         profileId:
           type: string
@@ -547,6 +526,11 @@ components:
           type: [string, "null"]
         source:
           $ref: "#/components/schemas/FriendSource"
+        presences:
+          type: array
+          description: Every active runtime Presence for this friend. Empty when offline.
+          items:
+            $ref: "#/components/schemas/Presence"
 
     FriendRequest:
       type: object
@@ -579,16 +563,6 @@ components:
         officialSync:
           type: string
           const: SKIPPED
-
-    FriendPresenceResponse:
-      type: object
-      additionalProperties: false
-      required: [statuses]
-      properties:
-        statuses:
-          type: array
-          items:
-            $ref: "#/components/schemas/Presence"
 
     Presence:
       type: object

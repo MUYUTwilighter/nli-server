@@ -48,3 +48,6 @@ use-auth-secret
 static-auth-secret=replace-with-the-same-secret-used-by-coturn
 realm=turn.example.com
 ```
+
+The complete Ubuntu/Alibaba Cloud deployment template, firewall ports, NAT mapping, and verification procedure are in
+[`deploy/coturn/README.md`](../deploy/coturn/README.md).

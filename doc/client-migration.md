@@ -3,7 +3,8 @@
 NetherLink client code should eventually replace:
 
 - Instance startup and Minecraft identity verification with `/v1/instances`.
-- `ClientFriendService` official friend list calls with `/v1/friends` using the returned `instanceToken`.
+- `ClientFriendService` official friend list and Presence calls with one `/v1/friends` request using the returned
+  `instanceToken`; each friend contains its active `presences` array.
 - `PresencePublisher` with `/v1/presence` using the returned `instanceToken`.
 - `SignalingClient` official signaling configuration and JSON-RPC calls with `/v1/signaling/ws`.
 - TURN auth request with `/v1/turn`.

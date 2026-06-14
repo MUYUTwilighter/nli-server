@@ -1,0 +1,49 @@
+# Replace every value wrapped in angle brackets before installation.
+# On Alibaba Cloud ECS, PUBLIC_IP is usually the EIP/public address and
+# PRIVATE_IP is the address shown by `hostname -I`.
+
+listening-ip=<PRIVATE_IP>
+relay-ip=<PRIVATE_IP>
+external-ip=<PUBLIC_IP>/<PRIVATE_IP>
+
+listening-port=3478
+min-port=49160
+max-port=49200
+
+fingerprint
+use-auth-secret
+static-auth-secret=<TURN_SHARED_SECRET>
+realm=<TURN_DOMAIN>
+server-name=<TURN_DOMAIN>
+stale-nonce=600
+
+# Keep the administrative CLI disabled unless it is explicitly needed.
+no-cli
+no-multicast-peers
+
+# Initial deployment uses UDP/TCP on 3478. Remove these two lines and enable
+# tls-listening-port, cert, and pkey below after installing a valid certificate.
+no-tls
+no-dtls
+
+# Protect internal services from being used as TURN peers.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.0.2.0-192.0.2.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=198.51.100.0-198.51.100.255
+denied-peer-ip=203.0.113.0-203.0.113.255
+denied-peer-ip=224.0.0.0-255.255.255.255
+
+# Enable these after a certificate has been installed for TURN_DOMAIN.
+# tls-listening-port=5349
+# cert=/etc/letsencrypt/live/<TURN_DOMAIN>/fullchain.pem
+# pkey=/etc/letsencrypt/live/<TURN_DOMAIN>/privkey.pem
+
+syslog

@@ -138,7 +138,20 @@ Response:
     {
       "profileId": "uuid",
       "name": "PlayerName",
-      "source": "netherlink"
+      "source": "netherlink",
+      "presences": [
+        {
+          "profileId": "uuid",
+          "presenceId": "public-presence-id",
+          "status": "HOSTING",
+          "joinable": true,
+          "sessionId": "host-session-id",
+          "endpoint": null,
+          "displayText": "1.18.2 Forge - Singleplayer world",
+          "updatedAt": "2026-06-01T15:03:35Z",
+          "expiresAt": "2026-06-01T15:04:35Z"
+        }
+      ]
     }
   ],
   "incomingRequests": [],
@@ -147,7 +160,9 @@ Response:
 ```
 
 The backend resolves display names from the Minecraft profile service. `name` is `null` when a stored profile no longer
-resolves, while the UUID and relationship remain available.
+resolves, while the UUID and relationship remain available. `presences` contains every active runtime instance for that
+friend and is an empty array when the friend is offline. The caller's own Presence and pending-request Presence are not
+included. Expired entries are removed from the Redis profile index while the snapshot is assembled.
 
 ## Add Friend
 
@@ -188,7 +203,7 @@ friendship. Requests targeting the caller are rejected, and adding an existing f
 ## Accept Request
 
 ```http
-POST /v1/friends/{profileId}/accept
+POST /v1/friends/request/{profileId}
 Authorization: Bearer <instance_token>
 ```
 
@@ -207,7 +222,7 @@ Response:
 ## Decline Or Revoke Request
 
 ```http
-DELETE /v1/friends/requests/{profileId}
+DELETE /v1/friends/request/{profileId}
 Authorization: Bearer <instance_token>
 ```
 
@@ -280,34 +295,3 @@ Authorization: Bearer <instance_token>
 Sets the Presence associated with this instance token to `OFFLINE` or removes it.
 
 Returns `204 No Content`. The operation is idempotent while the runtime instance token remains valid.
-
-## Friend Presence
-
-```http
-GET /v1/friends/presence
-Authorization: Bearer <instance_token>
-```
-
-Response:
-
-```json
-{
-  "statuses": [
-    {
-      "profileId": "uuid",
-      "presenceId": "public-presence-id",
-      "status": "HOSTING",
-      "joinable": true,
-      "sessionId": "host-session-id",
-      "displayText": "1.18.2 Forge - Singleplayer world",
-      "updatedAt": "2026-06-01T15:03:35Z",
-      "expiresAt": "2026-06-01T15:04:35Z"
-    }
-  ]
-}
-```
-
-Only return Presence for profiles that are friends with the caller. If a friend has multiple active `presence_id`
-records, return multiple list entries. The client should display those as separate join targets under the same account.
-The caller's own Presence and pending friend requests are not included. Expired entries are removed from the Redis
-profile index while the snapshot is assembled.
