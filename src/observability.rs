@@ -3,14 +3,15 @@ use std::time::Instant;
 use axum::{
     body::Body,
     extract::{MatchedPath, State},
-    http::{Request, StatusCode, header},
+    http::{HeaderMap, Request, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use metrics::{describe_counter, describe_gauge, describe_histogram, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use secrecy::ExposeSecret;
 
-use crate::state::AppState;
+use crate::{api::ApiError, auth::bearer_token, state::AppState};
 
 pub fn install_metrics() -> anyhow::Result<PrometheusHandle> {
     let handle = PrometheusBuilder::new().install_recorder()?;
@@ -68,16 +69,54 @@ pub async fn track_http(request: Request<Body>, next: Next) -> Response {
     response
 }
 
-pub async fn metrics(State(state): State<AppState>) -> Response {
+pub async fn metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    authorize_metrics(&state, &headers)?;
     let Some(handle) = &state.metrics else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return Ok(StatusCode::SERVICE_UNAVAILABLE.into_response());
     };
-    (
+    Ok((
         [(
             header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
         handle.render(),
     )
-        .into_response()
+        .into_response())
+}
+
+fn authorize_metrics(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let Some(expected) = &state.config.metrics_token else {
+        return Ok(());
+    };
+    let candidate = bearer_token(headers).map_err(|_| {
+        ApiError::unauthorized(
+            "METRICS_UNAUTHORIZED",
+            "Metrics authorization token is required",
+        )
+    })?;
+    if constant_time_eq(
+        expected.expose_secret().as_bytes(),
+        candidate.expose_secret().as_bytes(),
+    ) {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized(
+            "METRICS_UNAUTHORIZED",
+            "Metrics authorization token is invalid",
+        ))
+    }
+}
+
+fn constant_time_eq(expected: &[u8], candidate: &[u8]) -> bool {
+    let mut diff = expected.len() ^ candidate.len();
+    let max_len = expected.len().max(candidate.len());
+    for index in 0..max_len {
+        let left = expected.get(index).copied().unwrap_or(0);
+        let right = candidate.get(index).copied().unwrap_or(0);
+        diff |= usize::from(left ^ right);
+    }
+    diff == 0
 }

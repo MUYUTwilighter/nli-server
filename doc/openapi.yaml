@@ -50,7 +50,8 @@ paths:
       tags: [Observability]
       operationId: getPrometheusMetrics
       summary: Export Prometheus metrics
-      security: []
+      security:
+        - metricsToken: []
       responses:
         "200":
           description: Prometheus text exposition.
@@ -60,6 +61,12 @@ paths:
                 type: string
         "503":
           description: The metrics recorder is unavailable.
+        "401":
+          description: Missing or invalid metrics bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/instances:
     post:
@@ -340,6 +347,11 @@ components:
       scheme: bearer
       bearerFormat: NetherLink runtime instance token
       description: Short-lived opaque token returned by POST /v1/instances.
+    metricsToken:
+      type: http
+      scheme: bearer
+      bearerFormat: NetherLink metrics token
+      description: Optional token configured through NLI_METRICS_TOKEN for GET /metrics.
 
   parameters:
     ProfileId:

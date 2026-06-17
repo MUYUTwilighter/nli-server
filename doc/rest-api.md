@@ -43,8 +43,9 @@ Healthy response:
 The endpoint returns `503 Service Unavailable` with `status=degraded` when either dependency fails or exceeds the
 health-check timeout. Dependency errors are logged internally but are not included in the response.
 
-Prometheus metrics are available from `GET /metrics`. They include HTTP request counts and latency, active signaling
-WebSockets, rate-limit events, Minecraft upstream failures, and official friend synchronization results.
+Prometheus metrics are available from `GET /metrics`. When `NLI_METRICS_TOKEN` is set, requests must include
+`Authorization: Bearer <metrics_token>`. Metrics include HTTP request counts and latency, active signaling WebSockets,
+rate-limit events, Minecraft upstream failures, and official friend synchronization results.
 
 ## Create Runtime Instance
 

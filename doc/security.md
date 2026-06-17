@@ -19,6 +19,7 @@ Minimum requirements:
 - Signaling source identity must be derived from `instanceToken`.
 - TURN credentials must be short-lived.
 - Logs must not include Minecraft tokens, instance tokens, TURN credentials, full SDP, or full ICE candidates.
+- Set `NLI_METRICS_TOKEN` in production so `GET /metrics` requires `Authorization: Bearer <token>`.
 - Production startup must reject weak TURN secrets, loopback binding, non-HTTPS Mojang endpoints, and non-HTTPS CORS origins.
 
 Recommended limits:

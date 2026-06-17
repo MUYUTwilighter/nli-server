@@ -8,6 +8,7 @@ use nli_server::{
     observability::install_metrics,
     redis::RedisStore,
 };
+use secrecy::SecretString;
 use serde_json::Value;
 use tokio::net::TcpListener;
 
@@ -15,7 +16,8 @@ use tokio::net::TcpListener;
 #[ignore = "requires local PostgreSQL and Redis servers"]
 async fn health_endpoint_reports_ready_dependencies() -> Result<()> {
     dotenvy::dotenv().ok();
-    let config = AppConfig::from_env()?;
+    let mut config = AppConfig::from_env()?;
+    config.metrics_token = Some(SecretString::from("metrics-test-token".to_owned()));
     let database = db::connect(&env::var("DATABASE_URL")?).await?;
     let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
     let metrics = install_metrics()?;
@@ -38,6 +40,28 @@ async fn health_endpoint_reports_ready_dependencies() -> Result<()> {
 
     let response = client
         .get(format!("http://{address}/metrics"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.json::<Value>().await?["code"],
+        "METRICS_UNAUTHORIZED"
+    );
+
+    let response = client
+        .get(format!("http://{address}/metrics"))
+        .bearer_auth("wrong-token")
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.json::<Value>().await?["code"],
+        "METRICS_UNAUTHORIZED"
+    );
+
+    let response = client
+        .get(format!("http://{address}/metrics"))
+        .bearer_auth("metrics-test-token")
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);

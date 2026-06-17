@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub turn_credential_ttl: Duration,
     pub cors_allow_origin: Option<HeaderValue>,
     pub trust_proxy_headers: bool,
+    pub metrics_token: Option<SecretString>,
     pub minecraft_profile_url: Url,
     pub minecraft_profile_by_name_url: Url,
     pub minecraft_profile_by_id_url: Url,
@@ -57,6 +58,7 @@ impl AppConfig {
                 })
                 .transpose()?,
             trust_proxy_headers: bool_var("NLI_TRUST_PROXY_HEADERS", false)?,
+            metrics_token: optional_secret_var("NLI_METRICS_TOKEN")?,
             minecraft_profile_url: env::var("MINECRAFT_PROFILE_URL")
                 .unwrap_or_else(|_| {
                     "https://api.minecraftservices.com/minecraft/profile".to_owned()
@@ -150,6 +152,20 @@ fn directory_url(name: &str, default: &str) -> Result<Url> {
 
 fn required_var(name: &str) -> Result<String> {
     env::var(name).with_context(|| format!("{name} must be set"))
+}
+
+fn optional_secret_var(name: &str) -> Result<Option<SecretString>> {
+    match env::var(name) {
+        Ok(value) => {
+            let value = value.trim();
+            if value.is_empty() || value.chars().any(char::is_control) {
+                anyhow::bail!("{name} must not be empty or contain control characters");
+            }
+            Ok(Some(SecretString::from(value.to_owned())))
+        }
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to read {name}")),
+    }
 }
 
 fn seconds_var(name: &str, default: u64) -> Result<Duration> {
