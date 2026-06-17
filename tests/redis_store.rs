@@ -17,7 +17,7 @@ use uuid::Uuid;
 #[ignore = "requires a local Redis server"]
 async fn redis_runtime_models_round_trip() -> Result<()> {
     dotenvy::dotenv().ok();
-    let redis_url = env::var("REDIS_URL")?;
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379/0".to_owned());
     let store = RedisStore::connect(&redis_url).await?;
     let test_id = Uuid::new_v4();
     let profile_id = Uuid::new_v4();

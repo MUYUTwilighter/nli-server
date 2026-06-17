@@ -15,7 +15,7 @@ use uuid::Uuid;
 #[ignore = "requires a local PostgreSQL server"]
 async fn friend_repository_lifecycle() -> Result<()> {
     dotenvy::dotenv().ok();
-    let pool = db::connect(&env::var("DATABASE_URL")?).await?;
+    let pool = db::connect(&database_url()).await?;
     let repository = FriendRepository::new(pool.clone());
     let requester = Uuid::new_v4();
     let target = Uuid::new_v4();
@@ -155,7 +155,7 @@ async fn friend_repository_lifecycle() -> Result<()> {
 #[ignore = "requires a local PostgreSQL server"]
 async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
     dotenvy::dotenv().ok();
-    let pool = db::connect(&env::var("DATABASE_URL")?).await?;
+    let pool = db::connect(&database_url()).await?;
     let first = Uuid::new_v4();
     let second = Uuid::new_v4();
     let (low, high) = normalize_friend_pair(first, second).unwrap();
@@ -222,4 +222,9 @@ async fn cleanup_profiles(pool: &PgPool, profile_ids: &[Uuid]) -> Result<()> {
             .await?;
     }
     Ok(())
+}
+
+fn database_url() -> String {
+    env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/nli_server".to_owned())
 }

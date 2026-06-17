@@ -1,4 +1,4 @@
-use std::{env, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{Duration as ChronoDuration, Utc};
@@ -31,8 +31,8 @@ async fn turn_api_issues_temporary_credentials_and_rate_limits() -> Result<()> {
     ];
     config.turn_shared_secret = SecretString::from("integration-secret".to_owned());
     config.turn_credential_ttl = Duration::from_secs(600);
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     redis
         .put_runtime_instance(
             &token_hash,

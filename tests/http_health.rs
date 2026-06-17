@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::Result;
 use nli_server::{
     api::{AppState, router},
@@ -18,8 +16,8 @@ async fn health_endpoint_reports_ready_dependencies() -> Result<()> {
     dotenvy::dotenv().ok();
     let mut config = AppConfig::from_env()?;
     config.metrics_token = Some(SecretString::from("metrics-test-token".to_owned()));
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let metrics = install_metrics()?;
     let state = AppState::new(config, database, redis)?.with_metrics(metrics);
     let listener = TcpListener::bind("127.0.0.1:0").await?;

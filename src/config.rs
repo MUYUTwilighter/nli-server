@@ -35,8 +35,11 @@ impl AppConfig {
                 .unwrap_or_else(|_| "127.0.0.1:8080".to_owned())
                 .parse()
                 .context("NLI_BIND_ADDR must be a valid socket address")?,
-            database_url: required_var("DATABASE_URL")?,
-            redis_url: required_var("REDIS_URL")?,
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                "postgres://postgres:postgres@127.0.0.1:5432/nli_server".to_owned()
+            }),
+            redis_url: env::var("REDIS_URL")
+                .unwrap_or_else(|_| "redis://127.0.0.1:6379/0".to_owned()),
             instance_token_ttl: seconds_var("INSTANCE_TOKEN_TTL_SECONDS", 1_800)?,
             presence_ttl: seconds_var("PRESENCE_TTL_SECONDS", 90)?,
             signaling_session_ttl: seconds_var("SIGNALING_SESSION_TTL_SECONDS", 300)?,

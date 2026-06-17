@@ -1,5 +1,4 @@
 use std::{
-    env,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -99,9 +98,9 @@ async fn friend_api_lifecycle() -> Result<()> {
     config.minecraft_profile_by_id_url =
         format!("http://{minecraft_address}/profiles/by-id/").parse()?;
     config.minecraft_friends_url = format!("http://{minecraft_address}/friends").parse()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
     cleanup_profiles(&database, &[player_a, player_b]).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(
         config,
         database.clone(),

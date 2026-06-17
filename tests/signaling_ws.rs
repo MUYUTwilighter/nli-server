@@ -1,4 +1,4 @@
-use std::{env, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -42,7 +42,7 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
     let outsider_token = format!("ws-token-{outsider_profile}");
 
     let config = AppConfig::from_env()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
     cleanup_profiles(
         &database,
         &[initiator_profile, host_profile, outsider_profile],
@@ -55,7 +55,7 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
         .request_or_accept(host_profile, initiator_profile, FriendSource::Netherlink)
         .await?;
 
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     put_instance(
         &redis,
         initiator_profile,

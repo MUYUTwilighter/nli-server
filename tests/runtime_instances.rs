@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::Result;
 use axum::{Json, Router, routing::get};
 use nli_server::{
@@ -36,8 +34,8 @@ async fn creates_and_renews_runtime_instance() -> Result<()> {
     let mut config = AppConfig::from_env()?;
     config.minecraft_profile_url =
         format!("http://{minecraft_address}/minecraft/profile").parse()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(config, database, redis.clone(), reqwest::Client::new());
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -199,8 +197,8 @@ async fn rejects_invalid_instance_request() -> Result<()> {
     let mut config = AppConfig::from_env()?;
     config.minecraft_profile_url =
         format!("http://{minecraft_address}/minecraft/profile").parse()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(config, database, redis, reqwest::Client::new());
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -246,8 +244,8 @@ async fn limits_runtime_instances_per_profile() -> Result<()> {
     let mut config = AppConfig::from_env()?;
     config.minecraft_profile_url =
         format!("http://{minecraft_address}/minecraft/profile").parse()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(config, database, redis, reqwest::Client::new());
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;

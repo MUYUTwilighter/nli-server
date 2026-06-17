@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::Result;
 use axum::{Json, Router, http::HeaderMap, routing::get};
 use nli_server::{
@@ -63,12 +61,12 @@ async fn instance_registration_maps_minecraft_identity_and_errors() -> Result<()
     config.minecraft_profile_url =
         format!("http://{minecraft_address}/minecraft/profile").parse()?;
     config.minecraft_friends_url = format!("http://{minecraft_address}/friends").parse()?;
-    let database = db::connect(&env::var("DATABASE_URL")?).await?;
+    let database = db::connect(&config.database_url).await?;
     let notch = Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5")?;
     FriendRepository::new(database.clone())
         .remove_friend(notch, imported_friend)
         .await?;
-    let redis = RedisStore::connect(&env::var("REDIS_URL")?).await?;
+    let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(
         config,
         database.clone(),
