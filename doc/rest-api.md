@@ -4,6 +4,10 @@ The client submits its Minecraft access token when creating a runtime instance. 
 derives the caller profile and Presence from the returned `instanceToken`. Best-effort official friend deletion is the
 only exception and may receive the Minecraft token again in `X-Minecraft-Access-Token`; it is never persisted.
 
+A runtime instance is an account-level authorization unit. One physical mod process may register several accounts by
+calling `POST /v1/instances` separately for each account and may reuse one HTTP connection pool, but every request uses
+exactly one account's bearer token.
+
 Use JSON for request and response bodies.
 
 The backend should replace these current client responsibilities:
@@ -60,7 +64,7 @@ Content-Type: application/json
 ```
 
 The backend validates the Minecraft token once, discards it, creates a fresh runtime Presence entry with
-`status=ONLINE`, and returns the verified identity plus a private token for this game process.
+`status=ONLINE`, and returns the verified identity plus a private token for this account-level runtime instance.
 
 Response:
 

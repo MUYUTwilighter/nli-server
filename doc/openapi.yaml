@@ -73,7 +73,10 @@ paths:
       tags: [Runtime Instances]
       operationId: createRuntimeInstance
       summary: Create a runtime game instance
-      description: Verifies the Minecraft token and best-effort imports established official friends.
+      description: |
+        Verifies exactly one Minecraft token, creates one account-bound runtime instance, and best-effort imports
+        established official friends. A physical mod process managing several accounts calls this operation separately
+        for each account and must not combine multiple Minecraft tokens into one bearer value.
       security:
         - minecraftAccessToken: []
       requestBody:
@@ -341,12 +344,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Minecraft access token
-      description: Minecraft access token verified with Minecraft Services. Never persisted by this service.
+      description: One Minecraft access token verified with Minecraft Services. Never combined or persisted.
     instanceToken:
       type: http
       scheme: bearer
       bearerFormat: NetherLink runtime instance token
-      description: Short-lived opaque token returned by POST /v1/instances.
+      description: Short-lived opaque token bound to one profileId and one presenceId.
     metricsToken:
       type: http
       scheme: bearer

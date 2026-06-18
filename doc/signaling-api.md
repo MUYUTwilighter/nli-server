@@ -10,6 +10,10 @@ Authorization: Bearer <instance_token>
 Each connected client is associated with the `profile_id` and `presence_id` derived from its instance token. A single
 `profile_id` may have multiple simultaneous WebSocket connections, one per running game instance.
 
+A physical mod process that manages multiple accounts must open one WebSocket per account-level runtime instance. One
+WebSocket cannot authenticate several instance tokens or multiplex several source Presence identities. The process may
+share its HTTP connection pool, but each signaling connection has exactly one authenticated source identity.
+
 Only one connection is retained for each `presenceId`. A newer connection replaces and closes the previous connection.
 Text frames are required; binary frames receive a `BAD_REQUEST` error. Ping frames receive Pong responses.
 

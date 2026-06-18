@@ -20,7 +20,13 @@ instance closure. It is not a persistent account login session.
 NetherLink uses a server-issued runtime instance token instead of depending on a client-selected instance id.
 
 `profile_id` identifies the Minecraft account. `instance_token` identifies and authorizes one currently running
-authenticated game instance for that account.
+authenticated account instance. A NetherLink runtime instance is an authorization unit, not necessarily an operating
+system process or one physical mod process.
+
+One physical mod process may manage several authenticated accounts. It must register each account separately with that
+account's Minecraft access token and retain a separate `instance_token + presence_id` pair for each account. A single
+registration request, instance token, Presence update, or signaling connection always represents exactly one account.
+Minecraft access tokens must not be combined into one bearer value.
 
 This matters because Java Edition users may run multiple game instances at the same time, possibly with different
 Minecraft versions, loaders, modpacks, worlds, or server targets. Presence must therefore be multi-instance. A single
@@ -29,9 +35,10 @@ account can publish several simultaneous Presence records, one per server-issued
 A profile may hold at most five active runtime instance tokens. Registration and slot allocation are atomic in Redis;
 expired and actively closed instances release their slots.
 
-When a game process starts, it should request a new instance token from NLI server using its Minecraft token. The backend
-validates the Minecraft identity, generates a fresh instance token, and immediately creates an `ONLINE` Presence record
-for that runtime instance. The Minecraft token is discarded after validation.
+When an account becomes active in a game process, the process should request a new instance token from NLI server using
+that account's Minecraft token. The backend validates the Minecraft identity, generates a fresh instance token, and
+immediately creates an `ONLINE` Presence record for that account runtime instance. The Minecraft token is discarded
+after validation. A multi-account process repeats this flow independently for every account.
 
 Recommended runtime identity fields:
 

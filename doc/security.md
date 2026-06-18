@@ -6,11 +6,15 @@ Minimum requirements:
 - WebSocket over TLS only.
 - Do not log Minecraft access tokens.
 - Do not persist Minecraft access tokens.
+- Do not combine multiple Minecraft access tokens into one bearer value. Multi-account processes must register each
+  account independently and discard each Minecraft token after registration.
 - Do not expose `instanceToken` to friends or put it in signaling payloads.
 - Treat `presenceId` as public and `instanceToken` as private.
 - Rate limit auth verification, friend actions, Presence publish, and signaling messages.
 - Apply global and client-IP limits before calling Minecraft authentication. Trust `X-Forwarded-For` only when
   `NLI_TRUST_PROXY_HEADERS=true` and the service is reachable exclusively through a trusted reverse proxy.
+- Multiple accounts registered by one physical process share its client-IP and global pre-authentication limits; each
+  resulting account remains subject to its own profile and instance limits.
 - Prevent signaling to non-friends.
 - Prevent joining non-joinable Presence.
 - Validate all UUIDs and message sizes.

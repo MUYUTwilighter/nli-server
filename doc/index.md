@@ -29,7 +29,8 @@ Operational metrics are exported at `GET /metrics` in Prometheus text format. Pr
 
 Start from the hard boundaries, then build the smallest service that satisfies the current client migration path:
 
-1. Register an active game process by validating Minecraft identity once without persisting login state or access tokens.
+1. Register one account-level runtime instance by validating one Minecraft identity without persisting login state or
+   access tokens; a physical mod process may repeat this independently for several accounts.
 2. Use the issued short-lived runtime instance token for every later authenticated operation.
 3. Store only the friend relationship graph persistently.
 4. Keep Presence, signaling sessions, and rate-limit state volatile.
