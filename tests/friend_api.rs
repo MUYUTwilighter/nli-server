@@ -150,7 +150,7 @@ async fn friend_api_lifecycle() -> Result<()> {
     assert_eq!(snapshot_b["incomingRequests"][0]["name"], "PlayerA");
 
     let response = client
-        .post(format!("http://{address}/v1/friends/request/{player_a}"))
+        .post(format!("http://{address}/v1/friends/requests/{player_a}"))
         .bearer_auth(&player_b_instance)
         .send()
         .await?;
@@ -211,7 +211,7 @@ async fn friend_api_lifecycle() -> Result<()> {
     assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
 
     let response = client
-        .delete(format!("http://{address}/v1/friends/requests/{player_b}"))
+        .delete(format!("http://{address}/v1/friends/request/{player_b}"))
         .bearer_auth(&player_a_instance)
         .send()
         .await?;
@@ -243,7 +243,7 @@ async fn friend_api_lifecycle() -> Result<()> {
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let response = client
-        .delete(format!("http://{address}/v1/friends/request/{player_b}"))
+        .delete(format!("http://{address}/v1/friends/requests/{player_b}"))
         .bearer_auth(&player_a_instance)
         .send()
         .await?;

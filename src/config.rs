@@ -90,9 +90,6 @@ impl AppConfig {
             anyhow::bail!("PROFILE_CACHE_TTL_SECONDS must be greater than zero");
         }
         if self.env.eq_ignore_ascii_case("production") {
-            if self.bind_addr.ip().is_loopback() {
-                anyhow::bail!("NLI_BIND_ADDR must not use a loopback address in production");
-            }
             if self.turn_shared_secret.expose_secret().len() < 32
                 || self
                     .turn_shared_secret

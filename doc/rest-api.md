@@ -51,6 +51,29 @@ Prometheus metrics are available from `GET /metrics`. When `NLI_METRICS_TOKEN` i
 `Authorization: Bearer <metrics_token>`. Metrics include HTTP request counts and latency, active signaling WebSockets,
 rate-limit events, Minecraft upstream failures, and official friend synchronization results.
 
+## Service Terms
+
+```http
+GET /v1/terms
+Accept-Language: zh-CN, en;q=0.8
+```
+
+The public endpoint returns the current Version 1 service terms as `text/plain; charset=utf-8`. It supports English and
+Chinese, sets `Content-Language` to `en` or `zh`, and defaults to English when no supported language is requested.
+
+A client that needs to select the language explicitly may use a JSON body. The body takes precedence over
+`Accept-Language`; regional tags such as `en-US` and `zh-CN` are accepted.
+
+```http
+POST /v1/terms
+Accept-Language: en
+Content-Type: application/json
+
+{
+  "language": "zh"
+}
+```
+
 ## Create Runtime Instance
 
 ```http
@@ -208,7 +231,7 @@ friendship. Requests targeting the caller are rejected, and adding an existing f
 ## Accept Request
 
 ```http
-POST /v1/friends/request/{profileId}
+POST /v1/friends/requests/{profileId}
 Authorization: Bearer <instance_token>
 ```
 
@@ -227,7 +250,7 @@ Response:
 ## Decline Or Revoke Request
 
 ```http
-DELETE /v1/friends/request/{profileId}
+DELETE /v1/friends/requests/{profileId}
 Authorization: Bearer <instance_token>
 ```
 

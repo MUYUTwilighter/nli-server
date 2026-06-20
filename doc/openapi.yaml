@@ -20,6 +20,7 @@ servers:
 tags:
   - name: Health
   - name: Observability
+  - name: Terms
   - name: Runtime Instances
   - name: Friends
   - name: Presence
@@ -67,6 +68,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/terms:
+    get:
+      tags: [Terms]
+      operationId: getTerms
+      summary: Get the current service terms
+      description: Selects a supported language from Accept-Language and defaults to English.
+      security: []
+      parameters:
+        - name: Accept-Language
+          in: header
+          required: false
+          description: Preferred language, including optional region and quality values.
+          schema:
+            type: string
+            examples: [en, zh-CN, "zh-CN;q=0.9, en;q=0.8"]
+      responses:
+        "200":
+          description: Current Version 1 service terms.
+          headers:
+            Content-Language:
+              description: Language of the returned terms.
+              schema:
+                type: string
+                enum: [en, zh]
+          content:
+            text/plain:
+              schema:
+                type: string
+    post:
+      tags: [Terms]
+      operationId: getTermsForLanguage
+      summary: Get the current service terms in a requested language
+      description: The language in the JSON body overrides Accept-Language. Unsupported values default to English.
+      security: []
+      parameters:
+        - name: Accept-Language
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TermsRequest"
+      responses:
+        "200":
+          description: Current Version 1 service terms.
+          headers:
+            Content-Language:
+              description: Language of the returned terms.
+              schema:
+                type: string
+                enum: [en, zh]
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /v1/instances:
     post:
@@ -203,7 +264,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /v1/friends/request/{profileId}:
+  /v1/friends/requests/{profileId}:
     post:
       tags: [Friends]
       operationId: acceptFriendRequest
@@ -412,6 +473,15 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    TermsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: [string, "null"]
+          description: Preferred terms language. Regional forms such as en-US and zh-CN are accepted.
+          examples: [en, zh-CN]
+
     ErrorResponse:
       type: object
       additionalProperties: false

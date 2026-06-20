@@ -17,6 +17,7 @@ small service layer that keeps persistent data narrow and stores runtime multipl
 - [Signaling API Draft](signaling-api.md): WebSocket envelope, forwarding rules, and signaling errors.
 - [TURN Auth](turn-auth.md): temporary TURN credential endpoint requirements.
 - [coturn Deployment](../deploy/coturn/README.md): production relay configuration, firewall rules, and verification.
+- [Nginx Deployment](../deploy/nginx/README.md): HTTPS and WebSocket reverse proxy for `nli-api.muyucloud.cool`.
 - [Official API Bridge](official-api-bridge.md): best-effort Mojang API integration behavior.
 - [Security](security.md): security requirements and recommended rate limits.
 - [MVP Order](mvp-order.md): suggested implementation order.

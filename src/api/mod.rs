@@ -5,6 +5,7 @@ mod health;
 mod instances;
 mod presence;
 mod signaling;
+mod terms;
 mod turn;
 
 use std::time::Duration;
@@ -36,13 +37,14 @@ pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/metrics", get(crate::observability::metrics))
+        .route("/v1/terms", get(terms::get).post(terms::post))
         .route("/v1/instances", post(instances::create))
         .route("/v1/instances/renew", post(instances::renew))
         .route("/v1/instances/current", delete(instances::close))
         .route("/v1/friends", get(friends::snapshot))
         .route("/v1/friends/requests", post(friends::add_request))
         .route(
-            "/v1/friends/request/{profile_id}",
+            "/v1/friends/requests/{profile_id}",
             post(friends::accept_request).delete(friends::delete_request),
         )
         .route("/v1/friends/{profile_id}", delete(friends::remove_friend))
