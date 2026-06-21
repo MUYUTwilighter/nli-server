@@ -8,7 +8,6 @@ use nli_server::{
     config::AppConfig,
     db::{self, friends::FriendRepository},
     model::{
-        friend::FriendSource,
         presence::{Presence, PresenceStatus},
         runtime_instance::RuntimeInstance,
         signaling::{SignalingPeer, SignalingSession},
@@ -49,10 +48,7 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
     )
     .await?;
     FriendRepository::new(database.clone())
-        .request_or_accept(initiator_profile, host_profile, FriendSource::Netherlink)
-        .await?;
-    FriendRepository::new(database.clone())
-        .request_or_accept(host_profile, initiator_profile, FriendSource::Netherlink)
+        .replace_with_official_snapshot(initiator_profile, &[host_profile], &[], &[])
         .await?;
 
     let redis = RedisStore::connect(&config.redis_url).await?;

@@ -1,27 +1,40 @@
-# Official API Bridge
+# Official Friends Bridge
 
-Official bridge behavior should be best effort, never the only source of truth.
+The official Minecraft friends service is the Version 1 source of truth for friends and pending requests. PostgreSQL
+stores a synchronized local projection solely for Presence visibility and WebSocket signaling authorization.
 
-Implemented bridge behavior:
+Every `GET /v1/friends` and friend mutation requires both credentials:
 
-- During `POST /v1/instances`, fetch `GET https://api.minecraftservices.com/friends` with the same Minecraft token and
-  import established official friends as `minecraft_import` relationships. Import failure never blocks registration.
-- During `DELETE /v1/friends/{profileId}`, optionally accept `X-Minecraft-Access-Token`, verify that it belongs to the
-  same profile as the instance token, and call the official friends endpoint with `updateType=REMOVE`.
-- Cache imported profile names in Redis. No official token or official response is persisted.
-- Do not block NetherLink add or accept if official add is blocked by official Presence requirements.
-- Record official sync results in structured logs and Prometheus counters.
+- `Authorization: Bearer <instance token>` identifies the active NetherLink runtime instance.
+- `X-Minecraft-Access-Token: <Minecraft token>` authorizes the official request and must resolve to the same profile.
 
-No persistent sync metadata table is created because persistent storage remains limited to the friend graph.
-Operational results use `nli_official_friend_sync_total` with operation and result labels.
+The Minecraft token is verified, used for that request, and discarded. It is never stored or logged.
 
-The official wire requests match the existing NetherLink client implementation:
+Wire mapping:
 
 ```text
-GET /friends
-Authorization: Bearer <minecraft token>
+GET /v1/friends
+  -> GET https://api.minecraftservices.com/friends
 
-PUT /friends
-Authorization: Bearer <minecraft token>
-{"profileId":"uuid","updateType":"REMOVE"}
+POST /v1/friends/requests {"name":"Player"}
+  -> PUT /friends {"name":"Player","updateType":"ADD"}
+
+POST /v1/friends/requests/{profileId}
+  -> PUT /friends {"profileId":"uuid","updateType":"ADD"}
+
+DELETE /v1/friends/requests/{profileId}
+DELETE /v1/friends/{profileId}
+  -> PUT /friends {"profileId":"uuid","updateType":"REMOVE"}
 ```
+
+Successful official responses contain the complete friend, incoming-request, and outgoing-request snapshot. The
+backend replaces the caller's local projection transactionally with that snapshot and caches returned profile names in
+Redis. A later read or instance registration repairs the projection if an official operation succeeded but local
+storage was temporarily unavailable.
+
+Friend mutations fail when the official service fails; the backend does not create a local-only relationship. Instance
+registration still treats initial synchronization as best effort so an official outage does not prevent startup.
+
+Migration `202606210001_reset_official_friend_graph.sql` discards all pre-bridge relationships and requests. Version 1
+does not attempt to promote legacy NetherLink-only relationships into official friendships. Migration
+`202606210002_restrict_friend_sources.sql` then restricts both projection tables to `minecraft_sync` rows.

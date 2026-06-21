@@ -8,10 +8,10 @@ One physical mod process may register several accounts, but every registration a
 token and produces exactly one account-bound runtime instance. The backend must not accept, combine, or retain a list of
 Minecraft access tokens as one authentication identity.
 
-The backend normally verifies a Minecraft access token only during runtime instance registration and must discard it
-immediately after validation. The one explicit exception is best-effort official friend deletion: the client may attach
-`X-Minecraft-Access-Token` to that single request. The backend verifies that it belongs to the same profile as the
-runtime instance, calls the official API, and discards it immediately. It is never stored or logged.
+The backend verifies a Minecraft access token during runtime instance registration and on every friend-list read or
+friend mutation. Friend endpoints receive the current token in `X-Minecraft-Access-Token`, verify that it belongs to
+the same profile as the runtime instance, call the official friends API, and discard it immediately. It is never stored
+or logged.
 
 Persistent storage is limited to:
 

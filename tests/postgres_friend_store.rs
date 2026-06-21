@@ -2,154 +2,11 @@ use std::env;
 
 use anyhow::Result;
 use nli_server::{
-    db::{
-        self,
-        friends::{FriendRepository, RequestOutcome},
-    },
+    db::{self, friends::FriendRepository},
     model::friend::{FriendSource, normalize_friend_pair},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
-
-#[tokio::test]
-#[ignore = "requires a local PostgreSQL server"]
-async fn friend_repository_lifecycle() -> Result<()> {
-    dotenvy::dotenv().ok();
-    let pool = db::connect(&database_url()).await?;
-    let repository = FriendRepository::new(pool.clone());
-    let requester = Uuid::new_v4();
-    let target = Uuid::new_v4();
-    let explicit_requester = Uuid::new_v4();
-    let explicit_target = Uuid::new_v4();
-    let imported = Uuid::new_v4();
-
-    cleanup_profiles(
-        &pool,
-        &[
-            requester,
-            target,
-            explicit_requester,
-            explicit_target,
-            imported,
-        ],
-    )
-    .await?;
-
-    assert_eq!(
-        repository
-            .request_or_accept(requester, target, FriendSource::MinecraftImport)
-            .await?,
-        RequestOutcome::Requested
-    );
-    let requester_snapshot = repository.snapshot(requester).await?;
-    assert_eq!(requester_snapshot.outgoing_requests.len(), 1);
-    assert!(requester_snapshot.incoming_requests.is_empty());
-    let target_snapshot = repository.snapshot(target).await?;
-    assert_eq!(target_snapshot.incoming_requests.len(), 1);
-    assert_eq!(
-        target_snapshot.incoming_requests[0].source,
-        FriendSource::MinecraftImport
-    );
-
-    assert_eq!(
-        repository
-            .request_or_accept(target, requester, FriendSource::Netherlink)
-            .await?,
-        RequestOutcome::Accepted
-    );
-    assert!(repository.are_friends(requester, target).await?);
-    let snapshot = repository.snapshot(requester).await?;
-    assert_eq!(snapshot.friends.len(), 1);
-    assert_eq!(snapshot.friends[0].source, FriendSource::MinecraftImport);
-    assert!(snapshot.incoming_requests.is_empty());
-    assert!(snapshot.outgoing_requests.is_empty());
-    assert!(
-        repository
-            .request_or_accept(requester, target, FriendSource::Netherlink)
-            .await
-            .is_err()
-    );
-    assert!(repository.remove_friend(target, requester).await?);
-    assert!(!repository.are_friends(requester, target).await?);
-
-    assert_eq!(
-        repository
-            .import_official_friends(requester, &[imported, requester])
-            .await?,
-        1
-    );
-    let imported_snapshot = repository.snapshot(requester).await?;
-    assert!(imported_snapshot.friends.iter().any(|friendship| {
-        friendship.source == FriendSource::MinecraftImport
-            && (friendship.profile_low == imported || friendship.profile_high == imported)
-    }));
-
-    assert_eq!(
-        repository
-            .request_or_accept(
-                explicit_requester,
-                explicit_target,
-                FriendSource::MinecraftSync,
-            )
-            .await?,
-        RequestOutcome::Requested
-    );
-    assert!(
-        repository
-            .accept(explicit_target, explicit_requester)
-            .await?
-    );
-    assert!(
-        repository
-            .are_friends(explicit_requester, explicit_target)
-            .await?
-    );
-    assert_eq!(
-        repository.snapshot(explicit_target).await?.friends[0].source,
-        FriendSource::MinecraftSync
-    );
-
-    assert!(
-        repository
-            .remove_friend(explicit_requester, explicit_target)
-            .await?
-    );
-    assert_eq!(
-        repository
-            .request_or_accept(
-                explicit_requester,
-                explicit_target,
-                FriendSource::Netherlink
-            )
-            .await?,
-        RequestOutcome::Requested
-    );
-    assert!(
-        repository
-            .delete_request(explicit_target, explicit_requester)
-            .await?
-    );
-    assert!(
-        repository
-            .snapshot(explicit_requester)
-            .await?
-            .outgoing_requests
-            .is_empty()
-    );
-
-    cleanup_profiles(
-        &pool,
-        &[
-            requester,
-            target,
-            explicit_requester,
-            explicit_target,
-            imported,
-        ],
-    )
-    .await?;
-    Ok(())
-}
 
 #[tokio::test]
 #[ignore = "requires a local PostgreSQL server"]
@@ -163,7 +20,7 @@ async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
 
     assert!(
         sqlx::query(
-            "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $1, 'netherlink')",
+            "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $1, 'minecraft_sync')",
         )
         .bind(first)
         .execute(&mut *transaction)
@@ -175,7 +32,7 @@ async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
     let mut transaction = pool.begin().await?;
     assert!(
         sqlx::query(
-            "INSERT INTO friendships (profile_low, profile_high, source) VALUES ($1, $2, 'netherlink')",
+            "INSERT INTO friendships (profile_low, profile_high, source) VALUES ($1, $2, 'minecraft_sync')",
         )
         .bind(high)
         .bind(low)
@@ -187,7 +44,7 @@ async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
 
     let mut transaction = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $2, 'netherlink')",
+        "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $2, 'minecraft_sync')",
     )
     .bind(first)
     .bind(second)
@@ -195,7 +52,7 @@ async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
     .await?;
     assert!(
         sqlx::query(
-            "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $2, 'netherlink')",
+            "INSERT INTO friend_requests (requester_profile_id, target_profile_id, source) VALUES ($1, $2, 'minecraft_sync')",
         )
         .bind(second)
         .bind(first)
@@ -205,6 +62,47 @@ async fn database_constraints_reject_invalid_friend_graph_rows() -> Result<()> {
     );
     transaction.rollback().await?;
 
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a local PostgreSQL server"]
+async fn official_snapshot_replaces_caller_graph() -> Result<()> {
+    dotenvy::dotenv().ok();
+    let pool = db::connect(&database_url()).await?;
+    let repository = FriendRepository::new(pool.clone());
+    let caller = Uuid::new_v4();
+    let stale_friend = Uuid::new_v4();
+    let official_friend = Uuid::new_v4();
+    let incoming = Uuid::new_v4();
+    let outgoing = Uuid::new_v4();
+    let profiles = [caller, stale_friend, official_friend, incoming, outgoing];
+    cleanup_profiles(&pool, &profiles).await?;
+
+    repository
+        .replace_with_official_snapshot(caller, &[stale_friend], &[], &[])
+        .await?;
+    repository
+        .replace_with_official_snapshot(caller, &[official_friend], &[incoming], &[outgoing])
+        .await?;
+
+    let snapshot = repository.snapshot(caller).await?;
+    assert_eq!(snapshot.friends.len(), 1);
+    assert!(repository.are_friends(caller, official_friend).await?);
+    assert!(!repository.are_friends(caller, stale_friend).await?);
+    assert_eq!(snapshot.friends[0].source, FriendSource::MinecraftSync);
+    assert_eq!(snapshot.incoming_requests[0].requester_profile_id, incoming);
+    assert_eq!(snapshot.outgoing_requests[0].target_profile_id, outgoing);
+
+    repository
+        .replace_with_official_snapshot(caller, &[], &[], &[])
+        .await?;
+    let snapshot = repository.snapshot(caller).await?;
+    assert!(snapshot.friends.is_empty());
+    assert!(snapshot.incoming_requests.is_empty());
+    assert!(snapshot.outgoing_requests.is_empty());
+
+    cleanup_profiles(&pool, &profiles).await?;
     Ok(())
 }
 

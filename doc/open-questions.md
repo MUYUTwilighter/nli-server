@@ -6,4 +6,5 @@ Resolved decisions:
 
 - Friend requests are created by player name; subsequent relationship operations use profile UUIDs.
 - Only the latest known player name is cached. Rename history is not persisted.
-- Established official friends are imported directly as `minecraft_import` friendships during instance registration.
+- The official friend and pending-request snapshot is mirrored as `minecraft_sync` rows during registration and every
+  friend operation.

@@ -64,7 +64,7 @@ async fn instance_registration_maps_minecraft_identity_and_errors() -> Result<()
     let database = db::connect(&config.database_url).await?;
     let notch = Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5")?;
     FriendRepository::new(database.clone())
-        .remove_friend(notch, imported_friend)
+        .replace_with_official_snapshot(notch, &[], &[], &[])
         .await?;
     let redis = RedisStore::connect(&config.redis_url).await?;
     let state = AppState::with_http_client(
@@ -137,7 +137,7 @@ async fn instance_registration_maps_minecraft_identity_and_errors() -> Result<()
     assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
 
     FriendRepository::new(database)
-        .remove_friend(notch, imported_friend)
+        .replace_with_official_snapshot(notch, &[], &[], &[])
         .await?;
 
     server.abort();

@@ -8,16 +8,12 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FriendSource {
-    Netherlink,
-    MinecraftImport,
     MinecraftSync,
 }
 
 impl FriendSource {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Netherlink => "netherlink",
-            Self::MinecraftImport => "minecraft_import",
             Self::MinecraftSync => "minecraft_sync",
         }
     }
@@ -34,8 +30,6 @@ impl FromStr for FriendSource {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "netherlink" => Ok(Self::Netherlink),
-            "minecraft_import" => Ok(Self::MinecraftImport),
             "minecraft_sync" => Ok(Self::MinecraftSync),
             _ => Err(UnknownFriendSource(value.to_owned())),
         }
@@ -103,23 +97,19 @@ mod tests {
 
     #[test]
     fn friend_source_uses_stable_storage_and_json_values() {
-        for (source, value) in [
-            (FriendSource::Netherlink, "netherlink"),
-            (FriendSource::MinecraftImport, "minecraft_import"),
-            (FriendSource::MinecraftSync, "minecraft_sync"),
-        ] {
-            assert_eq!(source.as_str(), value);
-            assert_eq!(source.to_string(), value);
-            assert_eq!(FriendSource::from_str(value).unwrap(), source);
-            assert_eq!(
-                serde_json::to_string(&source).unwrap(),
-                format!("\"{value}\"")
-            );
-            assert_eq!(
-                serde_json::from_str::<FriendSource>(&format!("\"{value}\"")).unwrap(),
-                source
-            );
-        }
+        let source = FriendSource::MinecraftSync;
+        let value = "minecraft_sync";
+        assert_eq!(source.as_str(), value);
+        assert_eq!(source.to_string(), value);
+        assert_eq!(FriendSource::from_str(value).unwrap(), source);
+        assert_eq!(
+            serde_json::to_string(&source).unwrap(),
+            format!("\"{value}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<FriendSource>(&format!("\"{value}\"")).unwrap(),
+            source
+        );
         assert!(FriendSource::from_str("unknown").is_err());
     }
 

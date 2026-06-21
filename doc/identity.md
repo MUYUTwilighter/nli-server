@@ -9,8 +9,9 @@ Recommended account identity fields:
 
 The client authenticates during runtime instance registration by presenting its Minecraft access token. The backend
 validates that token against Minecraft services and resolves the caller's profile UUID. After registration, HTTP and
-WebSocket operations use the issued `instance_token`, which is bound to the resolved `profile_id`. A Minecraft token may
-be supplied once more only for best-effort official friend deletion; it is revalidated and immediately discarded.
+WebSocket operations use the issued `instance_token`, which is bound to the resolved `profile_id`. Friend-list reads and
+mutations also receive the current Minecraft token, revalidate it against that profile, use it only for the official
+friends request, and immediately discard it.
 
 The runtime instance token is short-lived, stored only as a hash in Redis, and revocable by rotation, expiry, or active
 instance closure. It is not a persistent account login session.

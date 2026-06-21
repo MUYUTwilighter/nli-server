@@ -1,9 +1,10 @@
 # Data Model
 
-## Friend Relationship
+## Official Friend Projection
 
-Split established friendships and pending friend requests into separate persistent tables. This keeps the invariants
-simple and avoids overloading a single relationship edge with multiple meanings.
+PostgreSQL contains a local projection of the official Minecraft friend snapshot. It is used for fast Presence
+visibility and WebSocket signaling authorization; it is not an independent relationship source. Every successful
+official read or mutation replaces all rows involving the caller in one transaction.
 
 Established friendships are undirected:
 
@@ -11,7 +12,7 @@ Established friendships are undirected:
 friendships
 - profile_low uuid
 - profile_high uuid
-- source text                 # "netherlink", "minecraft_import", "minecraft_sync"
+- source text                 # "minecraft_sync" for Version 1 rows
 - created_at timestamp
 - updated_at timestamp
 ```
@@ -20,6 +21,7 @@ Recommended constraints:
 
 - Primary key: `(profile_low, profile_high)`.
 - `profile_low < profile_high` so the pair is stored once regardless of direction.
+- `source = 'minecraft_sync'`.
 
 Pending friend requests are directed:
 
@@ -27,7 +29,7 @@ Pending friend requests are directed:
 friend_requests
 - requester_profile_id uuid
 - target_profile_id uuid
-- source text                 # "netherlink", "minecraft_import", "minecraft_sync"
+- source text                 # "minecraft_sync" for Version 1 rows
 - created_at timestamp
 - updated_at timestamp
 ```
@@ -36,18 +38,13 @@ Recommended constraints:
 
 - Primary key: `(requester_profile_id, target_profile_id)`.
 - Reject self-requests.
+- `source = 'minecraft_sync'`.
 - Reject a request if the normalized pair already exists in `friendships`.
-- Reject duplicate inverse requests as a normal request; if `A -> B` exists and `B` requests `A`, treat that as accepting
-  the existing request.
+- Reject duplicate inverse requests; the official snapshot must contain at most one relationship state per pair.
 
-Accepting a request should be one database transaction:
-
-1. Delete the matching row from `friend_requests`.
-2. Insert the normalized pair into `friendships`.
-3. Delete any inverse pending request if it exists.
-
-Removing a friend deletes the normalized row from `friendships`. Declining or revoking a request deletes only the
-matching row from `friend_requests`.
+Snapshot replacement deletes all friendship and request rows involving the caller, inserts official friendships, then
+inserts official incoming and outgoing requests before committing. The official operation always happens first. A
+later refresh repairs the projection if the local transaction fails.
 
 API output still presents three lists:
 

@@ -1,8 +1,9 @@
 # REST API Draft
 
-The client submits its Minecraft access token when creating a runtime instance. Every subsequent authenticated endpoint
-derives the caller profile and Presence from the returned `instanceToken`. Best-effort official friend deletion is the
-only exception and may receive the Minecraft token again in `X-Minecraft-Access-Token`; it is never persisted.
+The client submits its Minecraft access token when creating a runtime instance. Subsequent authenticated endpoints
+derive the caller profile and Presence from the returned `instanceToken`. Every friend-list read and mutation also
+submits the current token in `X-Minecraft-Access-Token`; it is verified, used for one official request, and never
+persisted.
 
 A runtime instance is an account-level authorization unit. One physical mod process may register several accounts by
 calling `POST /v1/instances` separately for each account and may reuse one HTTP connection pool, but every request uses
@@ -104,8 +105,9 @@ Response:
 `presenceId` is public and may be shown to friends or used as a signaling target. `instanceToken` is private and must be
 used for Presence updates and the signaling WebSocket.
 
-Registration also attempts to import established friends from the official Minecraft friends API. This is best effort:
-registration succeeds even when the official friends endpoint is unavailable or returns an incompatible response.
+Registration also attempts to synchronize the complete official friend and pending-request snapshot. This is best
+effort: registration succeeds even when the official friends endpoint is unavailable or returns an incompatible
+response.
 
 Instance token requirements:
 
@@ -156,6 +158,7 @@ releases one of the profile's five runtime-instance slots.
 ```http
 GET /v1/friends
 Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
 ```
 
 Response:
@@ -166,7 +169,7 @@ Response:
     {
       "profileId": "uuid",
       "name": "PlayerName",
-      "source": "netherlink",
+      "source": "minecraft_sync",
       "presences": [
         {
           "profileId": "uuid",
@@ -187,16 +190,17 @@ Response:
 }
 ```
 
-The backend resolves display names from the Minecraft profile service. `name` is `null` when a stored profile no longer
-resolves, while the UUID and relationship remain available. `presences` contains every active runtime instance for that
-friend and is an empty array when the friend is offline. The caller's own Presence and pending-request Presence are not
-included. Expired entries are removed from the Redis profile index while the snapshot is assembled.
+Before assembling this response, the backend refreshes and transactionally mirrors the complete official friend
+snapshot. Returned official names are cached in Redis. `presences` contains every active NetherLink runtime instance
+for that friend and is empty when the friend has none. The caller's own Presence and pending-request Presence are not
+included.
 
 ## Add Friend
 
 ```http
 POST /v1/friends/requests
 Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
 Content-Type: application/json
 
 {
@@ -204,9 +208,8 @@ Content-Type: application/json
 }
 ```
 
-The backend resolves the target profile UUID by name. Names must contain 3 to 16 ASCII letters, digits, or underscores.
-This creates a NetherLink request without attempting an official friend operation. Sending a reciprocal request accepts
-the pending request immediately.
+Names must contain 3 to 16 ASCII letters, digits, or underscores. The backend sends an official `ADD` update by name,
+then replaces the caller's local projection with the official response.
 
 Response:
 
@@ -214,28 +217,23 @@ Response:
 {
   "result": "SUCCESS",
   "relationship": "REQUESTED",
-  "officialSync": "SKIPPED"
+  "officialSync": "SUCCESS"
 }
 ```
 
-`relationship` is `REQUESTED` for a newly pending request and `ACCEPTED` when a reciprocal request completes the
-friendship. Requests targeting the caller are rejected, and adding an existing friend returns `409 Conflict`.
-
-`officialSync` values:
-
-- `SUCCESS`
-- `FAILED`
-- `SKIPPED`
-- `UNSUPPORTED`
+`relationship` is `REQUESTED` when the official response contains an outgoing request and `ACCEPTED` when it contains
+an established friendship. `officialSync` is `SUCCESS`; failed official operations return an HTTP error and do not
+create local-only relationships.
 
 ## Accept Request
 
 ```http
 POST /v1/friends/requests/{profileId}
 Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
 ```
 
-Creates a NetherLink friendship from an incoming request. A missing incoming request returns `404 Not Found`.
+Sends an official `ADD` update by profile UUID and synchronizes the returned snapshot.
 
 Response:
 
@@ -243,7 +241,7 @@ Response:
 {
   "result": "SUCCESS",
   "relationship": "ACCEPTED",
-  "officialSync": "SKIPPED"
+  "officialSync": "SUCCESS"
 }
 ```
 
@@ -252,23 +250,25 @@ Response:
 ```http
 DELETE /v1/friends/requests/{profileId}
 Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
 ```
 
-Deletes the pending NetherLink request involving the caller and target. Returns `204 No Content` and is idempotent.
+Sends an official `REMOVE` update to decline an incoming request or revoke an outgoing request, synchronizes the
+returned snapshot, and returns `204 No Content`.
 
 ## Remove Friend
 
 ```http
 DELETE /v1/friends/{profileId}
 Authorization: Bearer <instance_token>
-X-Minecraft-Access-Token: <optional one-use minecraft token>
+X-Minecraft-Access-Token: <minecraft_access_token>
 ```
 
-Deletes the NetherLink friendship. Returns `204 No Content` and is idempotent. When the optional Minecraft token is
-present and belongs to the same profile as the instance token, the backend also attempts the official
-`updateType=REMOVE` operation. Official failure is logged and counted but does not restore the local relationship.
+Sends an official `REMOVE` update, synchronizes the returned snapshot, and returns `204 No Content`.
 
 Friend request, acceptance, decline, revoke, and removal operations share a limit of 10 attempts per caller per minute.
+Missing or mismatched Minecraft credentials return `401`; official permission, rate-limit, malformed-response, and
+availability failures map to `403`, `429`, `502`, and `503` respectively.
 
 ## Publish Presence
 

@@ -5,12 +5,13 @@ info:
   description: |
     REST API for NetherLink Minecraft Java P2P multiplayer.
 
-    Minecraft access tokens are verified during runtime instance registration and are never persisted.
-    Friend deletion may optionally receive a one-time Minecraft token for the official friend bridge.
+    Minecraft access tokens are verified during runtime instance registration and every official friend operation.
+    They are never persisted. Friend endpoints receive the current token in X-Minecraft-Access-Token.
     Runtime instance tokens are short-lived opaque credentials backed by Redis.
     The WebSocket signaling protocol is documented separately in signaling-api.md.
   license:
-    name: See repository LICENSE
+    name: All Rights Reserved
+    identifier: https://github.com/MUYUTwilighter/nli-server/blob/master/LICENSE
   contact:
     name: MUYU_Twilighter
     url: https://muyucloud.cool/
@@ -28,10 +29,10 @@ tags:
 paths:
   /health:
     get:
-      tags: [Health]
+      tags: [ Health ]
       operationId: getHealth
       summary: Check service dependencies
-      security: []
+      security: [ ]
       responses:
         "200":
           description: PostgreSQL and Redis are healthy.
@@ -48,11 +49,11 @@ paths:
 
   /metrics:
     get:
-      tags: [Observability]
+      tags: [ Observability ]
       operationId: getPrometheusMetrics
       summary: Export Prometheus metrics
       security:
-        - metricsToken: []
+        - metricsToken: [ ]
       responses:
         "200":
           description: Prometheus text exposition.
@@ -71,11 +72,11 @@ paths:
 
   /v1/terms:
     get:
-      tags: [Terms]
+      tags: [ Terms ]
       operationId: getTerms
       summary: Get the current service terms
       description: Selects a supported language from Accept-Language and defaults to English.
-      security: []
+      security: [ ]
       parameters:
         - name: Accept-Language
           in: header
@@ -83,7 +84,7 @@ paths:
           description: Preferred language, including optional region and quality values.
           schema:
             type: string
-            examples: [en, zh-CN, "zh-CN;q=0.9, en;q=0.8"]
+            examples: [ en, zh-CN, "zh-CN;q=0.9, en;q=0.8" ]
       responses:
         "200":
           description: Current Version 1 service terms.
@@ -92,17 +93,17 @@ paths:
               description: Language of the returned terms.
               schema:
                 type: string
-                enum: [en, zh]
+                enum: [ en, zh ]
           content:
             text/plain:
               schema:
                 type: string
     post:
-      tags: [Terms]
+      tags: [ Terms ]
       operationId: getTermsForLanguage
       summary: Get the current service terms in a requested language
       description: The language in the JSON body overrides Accept-Language. Unsupported values default to English.
-      security: []
+      security: [ ]
       parameters:
         - name: Accept-Language
           in: header
@@ -123,7 +124,7 @@ paths:
               description: Language of the returned terms.
               schema:
                 type: string
-                enum: [en, zh]
+                enum: [ en, zh ]
           content:
             text/plain:
               schema:
@@ -131,15 +132,15 @@ paths:
 
   /v1/instances:
     post:
-      tags: [Runtime Instances]
+      tags: [ Runtime Instances ]
       operationId: createRuntimeInstance
       summary: Create a runtime game instance
       description: |
-        Verifies exactly one Minecraft token, creates one account-bound runtime instance, and best-effort imports
-        established official friends. A physical mod process managing several accounts calls this operation separately
+        Verifies exactly one Minecraft token, creates one account-bound runtime instance, and best-effort synchronizes
+        the official friends snapshot. A physical mod process managing several accounts calls this operation separately
         for each account and must not combine multiple Minecraft tokens into one bearer value.
       security:
-        - minecraftAccessToken: []
+        - minecraftAccessToken: [ ]
       requestBody:
         required: true
         content:
@@ -170,11 +171,11 @@ paths:
 
   /v1/instances/renew:
     post:
-      tags: [Runtime Instances]
+      tags: [ Runtime Instances ]
       operationId: renewRuntimeInstance
       summary: Rotate and renew a runtime instance token
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       responses:
         "200":
           description: Renewed instance with a new token. The previous token is invalidated.
@@ -189,12 +190,12 @@ paths:
 
   /v1/instances/current:
     delete:
-      tags: [Runtime Instances]
+      tags: [ Runtime Instances ]
       operationId: closeRuntimeInstance
       summary: Close the current runtime instance
       description: Invalidates the token and removes Presence, WebSocket connection, and signaling sessions.
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       responses:
         "204":
           description: Runtime instance closed.
@@ -205,11 +206,14 @@ paths:
 
   /v1/friends:
     get:
-      tags: [Friends]
+      tags: [ Friends ]
       operationId: getFriendSnapshot
       summary: Get friends, their active Presence entries, and pending requests
+      description: Refreshes the official Minecraft friends snapshot before attaching active NetherLink Presence entries.
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
+      parameters:
+        - $ref: "#/components/parameters/MinecraftFriendToken"
       responses:
         "200":
           description: Current friend graph with every active Presence grouped under its friend.
@@ -218,18 +222,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/FriendSnapshotResponse"
         "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/friends/requests:
     post:
-      tags: [Friends]
+      tags: [ Friends ]
       operationId: createFriendRequest
       summary: Send a friend request by Minecraft player name
-      description: A reciprocal pending request is accepted immediately.
+      description: Proxies an ADD update to the official Minecraft friends service.
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
+      parameters:
+        - $ref: "#/components/parameters/MinecraftFriendToken"
       requestBody:
         required: true
         content:
@@ -246,33 +258,32 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
         "404":
           description: Minecraft player was not found.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: The players are already friends.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/friends/requests/{profileId}:
     post:
-      tags: [Friends]
+      tags: [ Friends ]
       operationId: acceptFriendRequest
       summary: Accept an incoming friend request
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       parameters:
         - $ref: "#/components/parameters/ProfileId"
+        - $ref: "#/components/parameters/MinecraftFriendToken"
       responses:
         "200":
           description: Friendship created.
@@ -283,66 +294,79 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
         "404":
-          description: Incoming friend request was not found.
+          description: Minecraft player or relationship was not found.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
-      tags: [Friends]
+      tags: [ Friends ]
       operationId: deleteFriendRequest
       summary: Decline or revoke a friend request
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       parameters:
         - $ref: "#/components/parameters/ProfileId"
+        - $ref: "#/components/parameters/MinecraftFriendToken"
       responses:
         "204":
           description: Pending request removed or already absent.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/friends/{profileId}:
     delete:
-      tags: [Friends]
+      tags: [ Friends ]
       operationId: removeFriend
-      summary: Remove a NetherLink friendship
+      summary: Remove an official Minecraft friendship
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       parameters:
         - $ref: "#/components/parameters/ProfileId"
-        - $ref: "#/components/parameters/MinecraftBridgeToken"
+        - $ref: "#/components/parameters/MinecraftFriendToken"
       responses:
         "204":
           description: Friendship removed or already absent.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InstanceUnauthorized"
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/presence:
     put:
-      tags: [Presence]
+      tags: [ Presence ]
       operationId: publishPresence
       summary: Publish or refresh Presence
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       requestBody:
         required: true
         content:
@@ -365,11 +389,11 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
-      tags: [Presence]
+      tags: [ Presence ]
       operationId: clearPresence
       summary: Remove the current instance Presence
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       responses:
         "204":
           description: Presence removed or already absent.
@@ -380,11 +404,11 @@ paths:
 
   /v1/turn:
     post:
-      tags: [TURN]
+      tags: [ TURN ]
       operationId: createTurnCredentials
       summary: Issue temporary coturn credentials
       security:
-        - instanceToken: []
+        - instanceToken: [ ]
       responses:
         "200":
           description: Temporary ICE server configuration.
@@ -426,11 +450,11 @@ components:
       schema:
         type: string
         format: uuid
-    MinecraftBridgeToken:
+    MinecraftFriendToken:
       name: X-Minecraft-Access-Token
       in: header
-      required: false
-      description: One-use Minecraft token for best-effort official friend deletion. It is verified and never persisted.
+      required: true
+      description: Current Minecraft token for this official friend request. It is verified, never persisted, and discarded after use.
       schema:
         type: string
 
@@ -449,6 +473,18 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     InstanceUnauthorized:
       description: Missing, malformed, expired, rotated, or closed runtime instance token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    FriendUnauthorized:
+      description: Missing, malformed, expired, or mismatched instance or Minecraft credential.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    OfficialFriendsForbidden:
+      description: The official Minecraft friends service does not permit the operation for this account.
       content:
         application/json:
           schema:
@@ -478,33 +514,33 @@ components:
       additionalProperties: false
       properties:
         language:
-          type: [string, "null"]
+          type: [ string, "null" ]
           description: Preferred terms language. Regional forms such as en-US and zh-CN are accepted.
-          examples: [en, zh-CN]
+          examples: [ en, zh-CN ]
 
     ErrorResponse:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [ code, message ]
       properties:
         code:
           type: string
-          examples: [INVALID_INSTANCE_TOKEN]
+          examples: [ INVALID_INSTANCE_TOKEN ]
         message:
           type: string
 
     HealthResponse:
       type: object
       additionalProperties: false
-      required: [status, dependencies]
+      required: [ status, dependencies ]
       properties:
         status:
           type: string
-          enum: [ok, degraded]
+          enum: [ ok, degraded ]
         dependencies:
           type: object
           additionalProperties: false
-          required: [postgres, redis]
+          required: [ postgres, redis ]
           properties:
             postgres:
               $ref: "#/components/schemas/DependencyHealth"
@@ -514,7 +550,7 @@ components:
     DependencyHealth:
       type: object
       additionalProperties: false
-      required: [healthy, latencyMs]
+      required: [ healthy, latencyMs ]
       properties:
         healthy:
           type: boolean
@@ -527,13 +563,13 @@ components:
       additionalProperties: false
       properties:
         displayText:
-          type: [string, "null"]
+          type: [ string, "null" ]
           maxLength: 96
 
     InstanceResponse:
       type: object
       additionalProperties: false
-      required: [profileId, presenceId, instanceToken, expiresAt]
+      required: [ profileId, presenceId, instanceToken, expiresAt ]
       properties:
         profileId:
           type: string
@@ -550,7 +586,7 @@ components:
     RegisterInstanceResponse:
       type: object
       additionalProperties: false
-      required: [profileId, name, presenceId, instanceToken, expiresAt]
+      required: [ profileId, name, presenceId, instanceToken, expiresAt ]
       example:
         profileId: "8667ba71-b85a-4004-af54-457a9734eed7"
         name: "PlayerName"
@@ -575,7 +611,7 @@ components:
     AddFriendRequest:
       type: object
       additionalProperties: false
-      required: [name]
+      required: [ name ]
       properties:
         name:
           type: string
@@ -584,7 +620,7 @@ components:
     FriendSnapshotResponse:
       type: object
       additionalProperties: false
-      required: [friends, incomingRequests, outgoingRequests]
+      required: [ friends, incomingRequests, outgoingRequests ]
       properties:
         friends:
           type: array
@@ -602,13 +638,13 @@ components:
     Friend:
       type: object
       additionalProperties: false
-      required: [profileId, name, source, presences]
+      required: [ profileId, name, source, presences ]
       properties:
         profileId:
           type: string
           format: uuid
         name:
-          type: [string, "null"]
+          type: [ string, "null" ]
         source:
           $ref: "#/components/schemas/FriendSource"
         presences:
@@ -620,34 +656,34 @@ components:
     FriendRequest:
       type: object
       additionalProperties: false
-      required: [profileId, name, source]
+      required: [ profileId, name, source ]
       properties:
         profileId:
           type: string
           format: uuid
         name:
-          type: [string, "null"]
+          type: [ string, "null" ]
         source:
           $ref: "#/components/schemas/FriendSource"
 
     FriendSource:
       type: string
-      enum: [netherlink, minecraft_import, minecraft_sync]
+      const: minecraft_sync
 
     FriendMutationResponse:
       type: object
       additionalProperties: false
-      required: [result, relationship, officialSync]
+      required: [ result, relationship, officialSync ]
       properties:
         result:
           type: string
           const: SUCCESS
         relationship:
           type: string
-          enum: [REQUESTED, ACCEPTED]
+          enum: [ REQUESTED, ACCEPTED ]
         officialSync:
           type: string
-          const: SKIPPED
+          const: SUCCESS
 
     Presence:
       type: object
@@ -673,9 +709,9 @@ components:
         joinable:
           type: boolean
         sessionId:
-          type: [string, "null"]
+          type: [ string, "null" ]
         endpoint:
-          type: [string, "null"]
+          type: [ string, "null" ]
         displayText:
           type: string
         updatedAt:
@@ -687,38 +723,38 @@ components:
 
     PresenceStatus:
       type: string
-      enum: [OFFLINE, ONLINE, IN_GAME, HOSTING]
+      enum: [ OFFLINE, ONLINE, IN_GAME, HOSTING ]
 
     PublishPresenceRequest:
       type: object
       additionalProperties: false
-      required: [status]
+      required: [ status ]
       properties:
         status:
           type: string
-          enum: [ONLINE, IN_GAME, HOSTING]
+          enum: [ ONLINE, IN_GAME, HOSTING ]
         joinable:
           type: boolean
           default: false
           description: May only be true when status is HOSTING.
         sessionId:
-          type: [string, "null"]
+          type: [ string, "null" ]
           maxLength: 128
         endpoint:
-          type: [string, "null"]
+          type: [ string, "null" ]
           maxLength: 512
         ttlSeconds:
-          type: [integer, "null"]
+          type: [ integer, "null" ]
           minimum: 0
           description: The server clamps this value to 30 through 180 seconds.
         displayText:
-          type: [string, "null"]
+          type: [ string, "null" ]
           maxLength: 96
 
     PublishPresenceResponse:
       type: object
       additionalProperties: false
-      required: [result, profileId, presenceId, expiresAt]
+      required: [ result, profileId, presenceId, expiresAt ]
       properties:
         result:
           type: string
@@ -735,7 +771,7 @@ components:
     TurnCredentialsResponse:
       type: object
       additionalProperties: false
-      required: [urls, username, credential, expiresAt]
+      required: [ urls, username, credential, expiresAt ]
       properties:
         urls:
           type: array

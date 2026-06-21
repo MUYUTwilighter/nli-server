@@ -136,34 +136,71 @@ impl MinecraftSocialClient {
             .await
             .map_err(MinecraftSocialError::Request)?;
         match response.status() {
-            StatusCode::OK => response
+            status if status.is_success() => response
                 .json::<OfficialFriendSnapshot>()
                 .await
                 .map_err(MinecraftSocialError::InvalidResponse),
-            status if status.is_client_error() => Err(MinecraftSocialError::InvalidToken),
+            StatusCode::UNAUTHORIZED => Err(MinecraftSocialError::InvalidToken),
+            StatusCode::FORBIDDEN => Err(MinecraftSocialError::Forbidden),
+            StatusCode::TOO_MANY_REQUESTS => Err(MinecraftSocialError::RateLimited),
             status => Err(MinecraftSocialError::UpstreamStatus(status)),
         }
     }
 
-    pub async fn remove_friend(
+    pub async fn add_friend_by_name(
+        &self,
+        access_token: &SecretString,
+        name: &str,
+    ) -> Result<OfficialFriendSnapshot, MinecraftSocialError> {
+        self.update_friends(access_token, OfficialFriendUpdate::by_name(name, "ADD"))
+            .await
+    }
+
+    pub async fn add_friend_by_id(
         &self,
         access_token: &SecretString,
         profile_id: Uuid,
-    ) -> Result<(), MinecraftSocialError> {
+    ) -> Result<OfficialFriendSnapshot, MinecraftSocialError> {
+        self.update_friends(access_token, OfficialFriendUpdate::by_id(profile_id, "ADD"))
+            .await
+    }
+
+    pub async fn remove_friend_by_id(
+        &self,
+        access_token: &SecretString,
+        profile_id: Uuid,
+    ) -> Result<OfficialFriendSnapshot, MinecraftSocialError> {
+        self.update_friends(
+            access_token,
+            OfficialFriendUpdate::by_id(profile_id, "REMOVE"),
+        )
+        .await
+    }
+
+    async fn update_friends(
+        &self,
+        access_token: &SecretString,
+        update: OfficialFriendUpdate<'_>,
+    ) -> Result<OfficialFriendSnapshot, MinecraftSocialError> {
         let response = self
             .http
             .put(self.friends_url.clone())
             .bearer_auth(access_token.expose_secret())
-            .json(&OfficialFriendUpdate {
-                profile_id,
-                update_type: "REMOVE",
-            })
+            .json(&update)
             .send()
             .await
             .map_err(MinecraftSocialError::Request)?;
         match response.status() {
-            status if status.is_success() => Ok(()),
-            status if status.is_client_error() => Err(MinecraftSocialError::InvalidToken),
+            status if status.is_success() => response
+                .json::<OfficialFriendSnapshot>()
+                .await
+                .map_err(MinecraftSocialError::InvalidResponse),
+            StatusCode::UNAUTHORIZED => Err(MinecraftSocialError::InvalidToken),
+            StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND => {
+                Err(MinecraftSocialError::UnknownProfile)
+            }
+            StatusCode::FORBIDDEN => Err(MinecraftSocialError::Forbidden),
+            StatusCode::TOO_MANY_REQUESTS => Err(MinecraftSocialError::RateLimited),
             status => Err(MinecraftSocialError::UpstreamStatus(status)),
         }
     }
@@ -189,9 +226,30 @@ pub struct OfficialFriend {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OfficialFriendUpdate {
-    profile_id: Uuid,
+struct OfficialFriendUpdate<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_id: Option<Uuid>,
     update_type: &'static str,
+}
+
+impl<'a> OfficialFriendUpdate<'a> {
+    fn by_name(name: &'a str, update_type: &'static str) -> Self {
+        Self {
+            name: Some(name),
+            profile_id: None,
+            update_type,
+        }
+    }
+
+    fn by_id(profile_id: Uuid, update_type: &'static str) -> Self {
+        Self {
+            name: None,
+            profile_id: Some(profile_id),
+            update_type,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -241,6 +299,12 @@ pub enum MinecraftProfileError {
 pub enum MinecraftSocialError {
     #[error("Minecraft access token is invalid")]
     InvalidToken,
+    #[error("Minecraft profile is unknown")]
+    UnknownProfile,
+    #[error("Minecraft friends operation is forbidden")]
+    Forbidden,
+    #[error("Minecraft friends operation was rate limited")]
+    RateLimited,
     #[error("Minecraft social request failed")]
     Request(#[source] reqwest::Error),
     #[error("Minecraft social service returned {0}")]
@@ -330,13 +394,18 @@ mod tests {
                 }))
             })
             .put(
-                |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                move |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
                     assert_eq!(
                         headers.get("authorization").unwrap(),
                         "Bearer minecraft-token"
                     );
-                    assert_eq!(body["updateType"], "REMOVE");
-                    StatusCode::OK
+                    assert!(body.get("name").is_some() || body.get("profileId").is_some());
+                    assert!(body["updateType"] == "ADD" || body["updateType"] == "REMOVE");
+                    Json(json!({
+                        "friends": [{ "profileId": friend_id, "name": "Friend" }],
+                        "incomingRequests": [],
+                        "outgoingRequests": []
+                    }))
                 },
             ),
         );
@@ -348,7 +417,9 @@ mod tests {
         let token = SecretString::from("minecraft-token".to_owned());
         let snapshot = client.friends(&token).await.unwrap();
         assert_eq!(snapshot.friends[0].profile_id, friend_id);
-        client.remove_friend(&token, friend_id).await.unwrap();
+        client.add_friend_by_name(&token, "Friend").await.unwrap();
+        client.add_friend_by_id(&token, friend_id).await.unwrap();
+        client.remove_friend_by_id(&token, friend_id).await.unwrap();
         server.abort();
     }
 }

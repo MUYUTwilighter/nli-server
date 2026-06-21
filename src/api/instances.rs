@@ -107,7 +107,7 @@ pub async fn create(
     {
         error!(error = %error, profile_id = %identity.profile_id, "failed to cache registered Minecraft profile");
     }
-    import_official_friends(&state, &authenticated.access_token, &identity).await;
+    synchronize_official_friends(&state, &authenticated.access_token, &identity).await;
 
     Ok(Json(RegisterInstanceResponse::new(
         &instance,
@@ -161,7 +161,7 @@ fn registration_client_key(
     peer_ip.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string())
 }
 
-async fn import_official_friends(
+async fn synchronize_official_friends(
     state: &AppState,
     access_token: &secrecy::SecretString,
     identity: &crate::auth::ProfileIdentity,
@@ -169,12 +169,17 @@ async fn import_official_friends(
     let snapshot = match state.minecraft_social.friends(access_token).await {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "upstream_error").increment(1);
-            tracing::warn!(error = %error, profile_id = %identity.profile_id, "official friend import skipped");
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "register", "result" => "upstream_error").increment(1);
+            tracing::warn!(error = %error, profile_id = %identity.profile_id, "official friend synchronization skipped");
             return;
         }
     };
-    for friend in &snapshot.friends {
+    for friend in snapshot
+        .friends
+        .iter()
+        .chain(&snapshot.incoming_requests)
+        .chain(&snapshot.outgoing_requests)
+    {
         if let Err(error) = state
             .redis
             .cache_profile(
@@ -184,7 +189,7 @@ async fn import_official_friends(
             )
             .await
         {
-            tracing::warn!(error = %error, profile_id = %friend.profile_id, "failed to cache imported profile");
+            tracing::warn!(error = %error, profile_id = %friend.profile_id, "failed to cache official friend profile");
         }
     }
     let friend_ids = snapshot
@@ -192,17 +197,32 @@ async fn import_official_friends(
         .iter()
         .map(|friend| friend.profile_id)
         .collect::<Vec<_>>();
+    let incoming_ids = snapshot
+        .incoming_requests
+        .iter()
+        .map(|friend| friend.profile_id)
+        .collect::<Vec<_>>();
+    let outgoing_ids = snapshot
+        .outgoing_requests
+        .iter()
+        .map(|friend| friend.profile_id)
+        .collect::<Vec<_>>();
     match crate::db::friends::FriendRepository::new(state.db.clone())
-        .import_official_friends(identity.profile_id, &friend_ids)
+        .replace_with_official_snapshot(
+            identity.profile_id,
+            &friend_ids,
+            &incoming_ids,
+            &outgoing_ids,
+        )
         .await
     {
-        Ok(imported) => {
-            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "success").increment(1);
-            tracing::info!(profile_id = %identity.profile_id, imported, "official friends imported");
+        Ok(()) => {
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "register", "result" => "success").increment(1);
+            tracing::info!(profile_id = %identity.profile_id, friends = friend_ids.len(), incoming = incoming_ids.len(), outgoing = outgoing_ids.len(), "official friends synchronized");
         }
         Err(error) => {
-            metrics::counter!("nli_official_friend_sync_total", "operation" => "import", "result" => "storage_error").increment(1);
-            tracing::error!(error = %error, profile_id = %identity.profile_id, "failed to import official friends");
+            metrics::counter!("nli_official_friend_sync_total", "operation" => "register", "result" => "storage_error").increment(1);
+            tracing::error!(error = %error, profile_id = %identity.profile_id, "failed to synchronize official friends");
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -21,6 +21,12 @@ use sqlx::PgPool;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
+#[derive(Default)]
+struct OfficialTestState {
+    friends: bool,
+    request_from_a: bool,
+}
+
 #[tokio::test]
 #[ignore = "requires local PostgreSQL and Redis servers"]
 async fn friend_api_lifecycle() -> Result<()> {
@@ -29,6 +35,9 @@ async fn friend_api_lifecycle() -> Result<()> {
     let player_b = Uuid::new_v4();
     let official_removals = Arc::new(AtomicUsize::new(0));
     let official_removals_server = official_removals.clone();
+    let official_state = Arc::new(Mutex::new(OfficialTestState::default()));
+    let official_get_state = official_state.clone();
+    let official_put_state = official_state.clone();
     let minecraft_listener = TcpListener::bind("127.0.0.1:0").await?;
     let minecraft_address = minecraft_listener.local_addr()?;
     let minecraft_server = tokio::spawn(async move {
@@ -70,20 +79,50 @@ async fn friend_api_lifecycle() -> Result<()> {
             )
             .route(
                 "/friends",
-                get(|| async {
-                    Json(json!({ "friends": [], "incomingRequests": [], "outgoingRequests": [] }))
+                get(move |headers: HeaderMap| {
+                    let official_state = official_get_state.clone();
+                    async move {
+                        let token = minecraft_token(&headers);
+                        Json(official_snapshot(
+                            &official_state.lock().unwrap(),
+                            token,
+                            player_a,
+                            player_b,
+                        ))
+                    }
                 })
                 .put(move |headers: HeaderMap, Json(body): Json<Value>| {
                     let official_removals = official_removals_server.clone();
+                    let official_state = official_put_state.clone();
                     async move {
-                        assert_eq!(
-                            headers.get("authorization").unwrap(),
-                            "Bearer player-a-token"
-                        );
-                        assert_eq!(body["profileId"], player_b.to_string());
-                        assert_eq!(body["updateType"], "REMOVE");
-                        official_removals.fetch_add(1, Ordering::SeqCst);
-                        reqwest::StatusCode::OK
+                        let token = minecraft_token(&headers);
+                        let update_type = body["updateType"].as_str().unwrap();
+                        let mut state = official_state.lock().unwrap();
+                        match (token, update_type) {
+                            ("player-a-token", "ADD") => {
+                                assert!(
+                                    body["name"] == "PlayerB"
+                                        || body["profileId"] == player_b.to_string()
+                                );
+                                if !state.friends {
+                                    state.request_from_a = true;
+                                }
+                            }
+                            ("player-b-token", "ADD") => {
+                                assert_eq!(body["profileId"], player_a.to_string());
+                                assert!(state.request_from_a);
+                                state.request_from_a = false;
+                                state.friends = true;
+                            }
+                            ("player-a-token", "REMOVE") => {
+                                assert_eq!(body["profileId"], player_b.to_string());
+                                state.request_from_a = false;
+                                state.friends = false;
+                                official_removals.fetch_add(1, Ordering::SeqCst);
+                            }
+                            _ => panic!("unexpected official friend update: {token} {body}"),
+                        }
+                        Json(official_snapshot(&state, token, player_a, player_b))
                     }
                 }),
             );
@@ -117,6 +156,7 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .get(format!("http://{address}/v1/friends"))
         .bearer_auth("player-a-token")
+        .header("x-minecraft-access-token", "player-a-token")
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
@@ -126,23 +166,37 @@ async fn friend_api_lifecycle() -> Result<()> {
     );
 
     let response = client
+        .get(format!("http://{address}/v1/friends"))
+        .bearer_auth(&player_a_instance)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.json::<Value>().await?["code"],
+        "MINECRAFT_TOKEN_REQUIRED"
+    );
+
+    let response = client
         .post(format!("http://{address}/v1/friends/requests"))
         .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
         .json(&json!({ "name": "PlayerB" }))
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let body: Value = response.json().await?;
     assert_eq!(body["relationship"], "REQUESTED");
-    assert_eq!(body["officialSync"], "SKIPPED");
+    assert_eq!(body["officialSync"], "SUCCESS");
 
-    let snapshot_a = friend_snapshot(&client, address, &player_a_instance).await?;
+    let snapshot_a =
+        friend_snapshot(&client, address, &player_a_instance, "player-a-token").await?;
     assert_eq!(
         snapshot_a["outgoingRequests"][0]["profileId"],
         player_b.to_string()
     );
     assert_eq!(snapshot_a["outgoingRequests"][0]["name"], "PlayerB");
-    let snapshot_b = friend_snapshot(&client, address, &player_b_instance).await?;
+    let snapshot_b =
+        friend_snapshot(&client, address, &player_b_instance, "player-b-token").await?;
     assert_eq!(
         snapshot_b["incomingRequests"][0]["profileId"],
         player_a.to_string()
@@ -152,15 +206,17 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .post(format!("http://{address}/v1/friends/requests/{player_a}"))
         .bearer_auth(&player_b_instance)
+        .header("x-minecraft-access-token", "player-b-token")
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     assert_eq!(response.json::<Value>().await?["relationship"], "ACCEPTED");
 
-    let snapshot_a = friend_snapshot(&client, address, &player_a_instance).await?;
+    let snapshot_a =
+        friend_snapshot(&client, address, &player_a_instance, "player-a-token").await?;
     assert_eq!(snapshot_a["friends"][0]["profileId"], player_b.to_string());
     assert_eq!(snapshot_a["friends"][0]["name"], "PlayerB");
-    assert_eq!(snapshot_a["friends"][0]["source"], "netherlink");
+    assert_eq!(snapshot_a["friends"][0]["source"], "minecraft_sync");
     let initial_presences = snapshot_a["friends"][0]["presences"].as_array().unwrap();
     assert_eq!(initial_presences.len(), 1);
     assert_eq!(initial_presences[0]["profileId"], player_b.to_string());
@@ -182,7 +238,7 @@ async fn friend_api_lifecycle() -> Result<()> {
             Duration::from_secs(60),
         )
         .await?;
-    let body = friend_snapshot(&client, address, &player_a_instance).await?;
+    let body = friend_snapshot(&client, address, &player_a_instance, "player-a-token").await?;
     let presences = body["friends"][0]["presences"].as_array().unwrap();
     assert_eq!(presences.len(), 2);
     assert!(
@@ -220,11 +276,12 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .post(format!("http://{address}/v1/friends/requests"))
         .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
         .json(&json!({ "name": "PlayerB" }))
         .send()
         .await?;
-    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
-    assert_eq!(response.json::<Value>().await?["code"], "ALREADY_FRIENDS");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await?["relationship"], "ACCEPTED");
 
     let response = client
         .delete(format!("http://{address}/v1/friends/{player_b}"))
@@ -238,6 +295,7 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .post(format!("http://{address}/v1/friends/requests"))
         .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
         .json(&json!({ "name": "PlayerB" }))
         .send()
         .await?;
@@ -245,11 +303,12 @@ async fn friend_api_lifecycle() -> Result<()> {
     let response = client
         .delete(format!("http://{address}/v1/friends/requests/{player_b}"))
         .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
     assert_eq!(
-        friend_snapshot(&client, address, &player_a_instance).await?["outgoingRequests"],
+        friend_snapshot(&client, address, &player_a_instance, "player-a-token").await?["outgoingRequests"],
         json!([])
     );
 
@@ -314,10 +373,12 @@ async fn friend_snapshot(
     client: &reqwest::Client,
     address: std::net::SocketAddr,
     token: &str,
+    minecraft_token: &str,
 ) -> Result<Value> {
     let response = client
         .get(format!("http://{address}/v1/friends"))
         .bearer_auth(token)
+        .header("x-minecraft-access-token", minecraft_token)
         .send()
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
@@ -329,6 +390,49 @@ fn profile_json(profile_id: Uuid, name: &str) -> Value {
         "id": profile_id.simple().to_string(),
         "name": name
     })
+}
+
+fn minecraft_token(headers: &HeaderMap) -> &str {
+    headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .expect("official request must carry a Minecraft token")
+}
+
+fn official_snapshot(
+    state: &OfficialTestState,
+    token: &str,
+    player_a: Uuid,
+    player_b: Uuid,
+) -> Value {
+    let friend = |profile_id, name| json!({ "profileId": profile_id, "name": name });
+    match token {
+        "player-a-token" if state.friends => json!({
+            "friends": [friend(player_b, "PlayerB")],
+            "incomingRequests": [],
+            "outgoingRequests": []
+        }),
+        "player-b-token" if state.friends => json!({
+            "friends": [friend(player_a, "PlayerA")],
+            "incomingRequests": [],
+            "outgoingRequests": []
+        }),
+        "player-a-token" if state.request_from_a => json!({
+            "friends": [],
+            "incomingRequests": [],
+            "outgoingRequests": [friend(player_b, "PlayerB")]
+        }),
+        "player-b-token" if state.request_from_a => json!({
+            "friends": [],
+            "incomingRequests": [friend(player_a, "PlayerA")],
+            "outgoingRequests": []
+        }),
+        "player-a-token" | "player-b-token" => {
+            json!({ "friends": [], "incomingRequests": [], "outgoingRequests": [] })
+        }
+        _ => panic!("unexpected Minecraft token: {token}"),
+    }
 }
 
 async fn cleanup_profiles(pool: &PgPool, profile_ids: &[Uuid]) -> Result<()> {

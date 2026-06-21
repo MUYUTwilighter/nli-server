@@ -11,10 +11,14 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::{
-    auth::{MinecraftProfileError, ProfileIdentity},
-    db::friends::{FriendRepository, RequestOutcome},
+    auth::{
+        MinecraftAuthError, MinecraftProfileError, MinecraftSocialError, OfficialFriend,
+        OfficialFriendSnapshot,
+    },
+    db::friends::FriendRepository,
     model::friend::{FriendRequest, FriendSource, Friendship},
     model::presence::Presence,
+    model::runtime_instance::RuntimeInstance,
     state::AppState,
 };
 
@@ -26,15 +30,28 @@ pub async fn snapshot(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<FriendSnapshotResponse>, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
+    let official = state
+        .minecraft_social
+        .friends(&access_token)
+        .await
+        .map_err(|error| social_error("refresh", error))?;
+    synchronize_official_snapshot(&state, caller.profile_id, &official).await?;
+    render_snapshot(&state, caller.profile_id).await
+}
+
+async fn render_snapshot(
+    state: &AppState,
+    caller_profile_id: Uuid,
+) -> Result<Json<FriendSnapshotResponse>, ApiError> {
     let snapshot = FriendRepository::new(state.db.clone())
-        .snapshot(caller.profile_id)
+        .snapshot(caller_profile_id)
         .await
         .map_err(repository_error)?;
 
     let mut profile_ids = Vec::new();
     for friendship in &snapshot.friends {
-        profile_ids.push(friend_profile_id(friendship, caller.profile_id));
+        profile_ids.push(friend_profile_id(friendship, caller_profile_id));
     }
     for request in &snapshot.incoming_requests {
         profile_ids.push(request.requester_profile_id);
@@ -44,16 +61,16 @@ pub async fn snapshot(
     }
     profile_ids.sort_unstable();
     profile_ids.dedup();
-    let names = resolve_names(&state, profile_ids).await?;
+    let names = resolve_names(state, profile_ids).await?;
     let mut presences =
-        resolve_friend_presences(&state, &snapshot.friends, caller.profile_id).await?;
+        resolve_friend_presences(state, &snapshot.friends, caller_profile_id).await?;
 
     Ok(Json(FriendSnapshotResponse {
         friends: snapshot
             .friends
             .into_iter()
             .map(|friendship| {
-                let profile_id = friend_profile_id(&friendship, caller.profile_id);
+                let profile_id = friend_profile_id(&friendship, caller_profile_id);
                 FriendResponse {
                     profile_id,
                     name: names.get(&profile_id).cloned().flatten(),
@@ -80,44 +97,26 @@ pub async fn add_request(
     headers: HeaderMap,
     Json(request): Json<AddFriendRequest>,
 ) -> Result<Json<FriendMutationResponse>, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
     let name = validate_player_name(&request.name)?;
-    let target = resolve_profile_by_name(&state, name).await?;
-    if caller.profile_id == target.profile_id {
-        return Err(ApiError::bad_request(
-            "SELF_FRIEND_REQUEST",
-            "Cannot send a friend request to yourself",
-        ));
-    }
     enforce_mutation_rate_limit(&state, caller.profile_id).await?;
-
-    let repository = FriendRepository::new(state.db.clone());
-    if repository
-        .are_friends(caller.profile_id, target.profile_id)
+    let official = state
+        .minecraft_social
+        .add_friend_by_name(&access_token, name)
         .await
-        .map_err(repository_error)?
-    {
-        return Err(ApiError::conflict(
-            "ALREADY_FRIENDS",
-            "Players are already friends",
-        ));
-    }
-    let outcome = repository
-        .request_or_accept(
-            caller.profile_id,
-            target.profile_id,
-            FriendSource::Netherlink,
+        .map_err(|error| social_error("add", error))?;
+    let relationship = relationship_for_name(&official, name).ok_or_else(|| {
+        ApiError::bad_gateway(
+            "INVALID_OFFICIAL_FRIEND_RESPONSE",
+            "Minecraft friends service returned no relationship for the requested player",
         )
-        .await
-        .map_err(repository_error)?;
+    })?;
+    synchronize_official_snapshot(&state, caller.profile_id, &official).await?;
 
     Ok(Json(FriendMutationResponse {
         result: "SUCCESS",
-        relationship: match outcome {
-            RequestOutcome::Requested => "REQUESTED",
-            RequestOutcome::Accepted => "ACCEPTED",
-        },
-        official_sync: "SKIPPED",
+        relationship,
+        official_sync: "SUCCESS",
     }))
 }
 
@@ -126,24 +125,30 @@ pub async fn accept_request(
     headers: HeaderMap,
     Path(profile_id): Path<String>,
 ) -> Result<Json<FriendMutationResponse>, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
     let requester = parse_profile_id(&profile_id)?;
     enforce_mutation_rate_limit(&state, caller.profile_id).await?;
-    let accepted = FriendRepository::new(state.db.clone())
-        .accept(caller.profile_id, requester)
+    let official = state
+        .minecraft_social
+        .add_friend_by_id(&access_token, requester)
         .await
-        .map_err(repository_error)?;
-    if !accepted {
-        return Err(ApiError::not_found(
-            "FRIEND_REQUEST_NOT_FOUND",
-            "Incoming friend request was not found",
+        .map_err(|error| social_error("accept", error))?;
+    if !official
+        .friends
+        .iter()
+        .any(|friend| friend.profile_id == requester)
+    {
+        return Err(ApiError::bad_gateway(
+            "INVALID_OFFICIAL_FRIEND_RESPONSE",
+            "Minecraft friends service did not return the accepted friendship",
         ));
     }
+    synchronize_official_snapshot(&state, caller.profile_id, &official).await?;
 
     Ok(Json(FriendMutationResponse {
         result: "SUCCESS",
         relationship: "ACCEPTED",
-        official_sync: "SKIPPED",
+        official_sync: "SUCCESS",
     }))
 }
 
@@ -152,13 +157,15 @@ pub async fn delete_request(
     headers: HeaderMap,
     Path(profile_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
     let peer = parse_profile_id(&profile_id)?;
     enforce_mutation_rate_limit(&state, caller.profile_id).await?;
-    FriendRepository::new(state.db.clone())
-        .delete_request(caller.profile_id, peer)
+    let official = state
+        .minecraft_social
+        .remove_friend_by_id(&access_token, peer)
         .await
-        .map_err(repository_error)?;
+        .map_err(|error| social_error("delete_request", error))?;
+    synchronize_official_snapshot(&state, caller.profile_id, &official).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -167,14 +174,15 @@ pub async fn remove_friend(
     headers: HeaderMap,
     Path(profile_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, caller) = authenticate_instance(&state, &headers).await?;
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
     let peer = parse_profile_id(&profile_id)?;
     enforce_mutation_rate_limit(&state, caller.profile_id).await?;
-    FriendRepository::new(state.db.clone())
-        .remove_friend(caller.profile_id, peer)
+    let official = state
+        .minecraft_social
+        .remove_friend_by_id(&access_token, peer)
         .await
-        .map_err(repository_error)?;
-    bridge_official_removal(&state, &headers, caller.profile_id, peer).await;
+        .map_err(|error| social_error("remove", error))?;
+    synchronize_official_snapshot(&state, caller.profile_id, &official).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -300,79 +308,113 @@ async fn resolve_names(
     Ok(names)
 }
 
-async fn resolve_profile_by_name(
-    state: &AppState,
-    name: &str,
-) -> Result<ProfileIdentity, ApiError> {
-    if let Some((profile_id, name)) = state
-        .redis
-        .cached_profile_by_name(name)
-        .await
-        .map_err(redis_error)?
-    {
-        return Ok(ProfileIdentity { profile_id, name });
-    }
-    let profile = state
-        .minecraft_profiles
-        .lookup_by_name(name)
-        .await
-        .map_err(profile_lookup_error)?;
-    state
-        .redis
-        .cache_profile(
-            profile.profile_id,
-            &profile.name,
-            state.config.profile_cache_ttl,
-        )
-        .await
-        .map_err(redis_error)?;
-    Ok(profile)
-}
-
-async fn bridge_official_removal(
+async fn authenticate_official_friend_request(
     state: &AppState,
     headers: &HeaderMap,
-    caller_profile_id: Uuid,
-    peer: Uuid,
-) {
-    let Some(access_token) = official_bridge_token(headers) else {
-        metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "skipped").increment(1);
-        return;
-    };
-    let verified = match state.minecraft_auth.verify(&access_token).await {
-        Ok(identity) if identity.profile_id == caller_profile_id => true,
-        Ok(_) => false,
+) -> Result<(RuntimeInstance, SecretString), ApiError> {
+    let (_, caller) = authenticate_instance(state, headers).await?;
+    let access_token = minecraft_friend_token(headers).ok_or_else(|| {
+        ApiError::unauthorized(
+            "MINECRAFT_TOKEN_REQUIRED",
+            "X-Minecraft-Access-Token is required for friend operations",
+        )
+    })?;
+    match state.minecraft_auth.verify(&access_token).await {
+        Ok(identity) if identity.profile_id == caller.profile_id => Ok((caller, access_token)),
+        Ok(_) | Err(MinecraftAuthError::InvalidToken) => Err(ApiError::unauthorized(
+            "INVALID_MINECRAFT_TOKEN",
+            "Minecraft access token does not belong to the runtime instance",
+        )),
         Err(error) => {
-            warn!(error = %error, profile_id = %caller_profile_id, "official removal token verification failed");
-            false
-        }
-    };
-    if !verified {
-        metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "invalid_token").increment(1);
-        return;
-    }
-    match state
-        .minecraft_social
-        .remove_friend(&access_token, peer)
-        .await
-    {
-        Ok(()) => {
-            metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "success").increment(1);
-        }
-        Err(error) => {
-            metrics::counter!("nli_official_friend_sync_total", "operation" => "remove", "result" => "upstream_error").increment(1);
-            warn!(error = %error, profile_id = %caller_profile_id, target_profile_id = %peer, "official friend removal failed");
+            metrics::counter!("nli_upstream_errors_total", "operation" => "minecraft_auth")
+                .increment(1);
+            warn!(error = %error, profile_id = %caller.profile_id, "friend token verification failed");
+            Err(ApiError::service_unavailable(
+                "Minecraft authentication service is unavailable",
+            ))
         }
     }
 }
 
-fn official_bridge_token(headers: &HeaderMap) -> Option<SecretString> {
+async fn synchronize_official_snapshot(
+    state: &AppState,
+    profile_id: Uuid,
+    snapshot: &OfficialFriendSnapshot,
+) -> Result<(), ApiError> {
+    for friend in all_official_entries(snapshot) {
+        if let Err(error) = state
+            .redis
+            .cache_profile(
+                friend.profile_id,
+                &friend.name,
+                state.config.profile_cache_ttl,
+            )
+            .await
+        {
+            warn!(error = %error, profile_id = %friend.profile_id, "failed to cache official friend profile");
+        }
+    }
+
+    FriendRepository::new(state.db.clone())
+        .replace_with_official_snapshot(
+            profile_id,
+            &snapshot
+                .friends
+                .iter()
+                .map(|friend| friend.profile_id)
+                .collect::<Vec<_>>(),
+            &snapshot
+                .incoming_requests
+                .iter()
+                .map(|friend| friend.profile_id)
+                .collect::<Vec<_>>(),
+            &snapshot
+                .outgoing_requests
+                .iter()
+                .map(|friend| friend.profile_id)
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .map_err(repository_error)?;
+    metrics::counter!("nli_official_friend_sync_total", "operation" => "reconcile", "result" => "success").increment(1);
+    Ok(())
+}
+
+fn all_official_entries(
+    snapshot: &OfficialFriendSnapshot,
+) -> impl Iterator<Item = &OfficialFriend> {
+    snapshot
+        .friends
+        .iter()
+        .chain(&snapshot.incoming_requests)
+        .chain(&snapshot.outgoing_requests)
+}
+
+fn relationship_for_name(snapshot: &OfficialFriendSnapshot, name: &str) -> Option<&'static str> {
+    if snapshot
+        .friends
+        .iter()
+        .any(|friend| friend.name.eq_ignore_ascii_case(name))
+    {
+        Some("ACCEPTED")
+    } else if snapshot
+        .outgoing_requests
+        .iter()
+        .any(|friend| friend.name.eq_ignore_ascii_case(name))
+    {
+        Some("REQUESTED")
+    } else {
+        None
+    }
+}
+
+fn minecraft_friend_token(headers: &HeaderMap) -> Option<SecretString> {
     let value = headers
         .get("x-minecraft-access-token")?
         .to_str()
         .ok()?
         .trim();
-    if value.is_empty() || value.chars().any(char::is_control) {
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
         return None;
     }
     Some(SecretString::from(value.to_owned()))
@@ -430,6 +472,36 @@ fn profile_lookup_error(error: MinecraftProfileError) -> ApiError {
     }
 }
 
+fn social_error(operation: &'static str, error: MinecraftSocialError) -> ApiError {
+    let result = match error {
+        MinecraftSocialError::InvalidToken => ApiError::unauthorized(
+            "INVALID_MINECRAFT_TOKEN",
+            "Minecraft access token was rejected by the friends service",
+        ),
+        MinecraftSocialError::UnknownProfile => {
+            ApiError::not_found("PLAYER_NOT_FOUND", "Minecraft player was not found")
+        }
+        MinecraftSocialError::Forbidden => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "OFFICIAL_FRIENDS_FORBIDDEN",
+            "Minecraft friends operation is not permitted for this account",
+        ),
+        MinecraftSocialError::RateLimited => {
+            ApiError::rate_limited("Minecraft friends service rate limit exceeded")
+        }
+        MinecraftSocialError::InvalidResponse(_) => ApiError::bad_gateway(
+            "INVALID_OFFICIAL_FRIEND_RESPONSE",
+            "Minecraft friends service returned an invalid response",
+        ),
+        MinecraftSocialError::Request(_) | MinecraftSocialError::UpstreamStatus(_) => {
+            ApiError::service_unavailable("Minecraft friends service is unavailable")
+        }
+    };
+    metrics::counter!("nli_official_friend_sync_total", "operation" => operation, "result" => "failed").increment(1);
+    warn!(error = %error, operation, "official friend operation failed");
+    result
+}
+
 fn repository_error(error: anyhow::Error) -> ApiError {
     error!(error = %error, "friend repository operation failed");
     ApiError::internal("Friend storage operation failed")
@@ -464,7 +536,7 @@ mod tests {
         let friendship = Friendship {
             profile_low: low,
             profile_high: high,
-            source: FriendSource::Netherlink,
+            source: FriendSource::MinecraftSync,
             created_at: now,
             updated_at: now,
         };

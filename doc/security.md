@@ -6,6 +6,7 @@ Minimum requirements:
 - WebSocket over TLS only.
 - Do not log Minecraft access tokens.
 - Do not persist Minecraft access tokens.
+- Require and revalidate `X-Minecraft-Access-Token` on every friend-list read and mutation, then discard it immediately.
 - Do not combine multiple Minecraft access tokens into one bearer value. Multi-account processes must register each
   account independently and discard each Minecraft token after registration.
 - Do not expose `instanceToken` to friends or put it in signaling payloads.
