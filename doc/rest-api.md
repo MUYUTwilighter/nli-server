@@ -359,7 +359,7 @@ Presence update rules:
 - `joinable=true` should be allowed only for statuses that the server accepts as host-capable, initially `HOSTING`.
 - Updating Presence should refresh the Redis TTL.
 - `OFFLINE` is rejected by this endpoint; clients should use `DELETE /v1/presence` instead.
-- Presence publishing is limited to one successful publish attempt per runtime instance every 10 seconds.
+- Presence publishing is limited to three publish attempts per runtime instance every 10 seconds.
 - `sessionId` is limited to 128 characters and `endpoint` to 512 characters. Control characters are rejected.
 - If `displayText` is omitted, the existing value is retained. If no Presence exists, the generic fallback is used.
 

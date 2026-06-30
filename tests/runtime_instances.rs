@@ -146,6 +146,32 @@ async fn creates_and_renews_runtime_instance() -> Result<()> {
         }))
         .send()
         .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let presence = redis.presence(&presence_id).await?.unwrap();
+    assert_eq!(presence.status, PresenceStatus::InGame);
+    assert!(!presence.joinable);
+    assert_eq!(presence.display_text, "Hosted test world");
+
+    let response = client
+        .put(format!("http://{address}/v1/presence"))
+        .bearer_auth(&new_token)
+        .json(&json!({
+            "status": "ONLINE",
+            "joinable": false
+        }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+    let response = client
+        .put(format!("http://{address}/v1/presence"))
+        .bearer_auth(&new_token)
+        .json(&json!({
+            "status": "HOSTING",
+            "joinable": true
+        }))
+        .send()
+        .await?;
     assert_eq!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(response.json::<Value>().await?["code"], "RATE_LIMITED");
 

@@ -22,6 +22,7 @@ use super::{
 const MIN_PRESENCE_TTL_SECONDS: u64 = 30;
 const MAX_PRESENCE_TTL_SECONDS: u64 = 180;
 const PRESENCE_PUBLISH_WINDOW: Duration = Duration::from_secs(10);
+const PRESENCE_PUBLISH_LIMIT_PER_WINDOW: u64 = 3;
 const MAX_SESSION_ID_CHARS: usize = 128;
 const MAX_ENDPOINT_CHARS: usize = 512;
 
@@ -169,7 +170,7 @@ async fn enforce_publish_rate_limit(state: &AppState, presence_id: &str) -> Resu
         )
         .await
         .map_err(redis_error)?;
-    if count > 1 {
+    if count > PRESENCE_PUBLISH_LIMIT_PER_WINDOW {
         metrics::counter!("nli_rate_limited_total", "endpoint" => "presence_publish").increment(1);
         return Err(ApiError::rate_limited(
             "Presence publish rate limit exceeded",

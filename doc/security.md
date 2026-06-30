@@ -31,7 +31,7 @@ Minimum requirements:
 Recommended limits:
 
 - Runtime instance creation: 10 requests per minute per profile.
-- Presence publish: 1 request per 10 seconds per instance token.
+- Presence publish: 3 requests per 10 seconds per instance token.
 - Friend mutation: 10 requests per minute per profile.
 - Signaling: 60 messages per minute per profile per peer.
 - SDP payload: 128 KiB max.
