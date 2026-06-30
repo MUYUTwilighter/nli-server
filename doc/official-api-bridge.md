@@ -16,11 +16,18 @@ Wire mapping:
 GET /v1/friends
   -> GET https://api.minecraftservices.com/friends
 
+GET /v1/friends/settings
+  -> GET https://api.minecraftservices.com/player/attributes
+
 POST /v1/friends/requests {"name":"Player"}
   -> PUT /friends {"name":"Player","updateType":"ADD"}
 
 POST /v1/friends/requests/{profileId}
   -> PUT /friends {"profileId":"uuid","updateType":"ADD"}
+
+PUT /v1/friends/settings {"friendsEnabled":true,"acceptInvites":true}
+  -> POST /player/attributes
+     {"friendsPreferences":{"friends":"ENABLED","acceptInvites":"ENABLED"}}
 
 DELETE /v1/friends/requests/{profileId}
 DELETE /v1/friends/{profileId}
@@ -34,6 +41,9 @@ storage was temporarily unavailable.
 
 Friend mutations fail when the official service fails; the backend does not create a local-only relationship. Instance
 registration still treats initial synchronization as best effort so an official outage does not prevent startup.
+
+Friend settings are changed only through an explicit client request. The backend never enables them automatically
+during registration.
 
 Migration `202606210001_reset_official_friend_graph.sql` discards all pre-bridge relationships and requests. Version 1
 does not attempt to promote legacy NetherLink-only relationships into official friendships. Migration

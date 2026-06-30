@@ -1,0 +1,38 @@
+NetherLink Service Terms (Version 1)
+
+Effective date: June 30, 2026
+
+1. Service
+NetherLink provides account identity verification, friend relationships, online presence, WebRTC signaling, and temporary TURN credentials for Minecraft Java peer-to-peer multiplayer. It does not provide Minecraft accounts, game licenses, worlds, or game content.
+
+2. Acceptance and eligibility
+By using the service, you agree to these terms. You must have the right to use the Minecraft account and access token submitted to the service, comply with applicable law, and comply with the terms of Minecraft and any relevant third-party service.
+
+3. Information used by the service
+When a runtime instance is registered, the service sends the supplied Minecraft access token to the official Minecraft profile service to verify the account. Friend-list reads, friend changes, and user-requested friend-network setting changes also require the current token so the service can verify the caller and access the official Minecraft services. The token is discarded after each request and is not persisted.
+
+The service may persist Minecraft profile UUIDs, cached profile names, a synchronized projection of official friendships and friend requests, their sources, and timestamps. Runtime instance tokens, presence entries, rate-limit counters, and signaling-session state are temporary data stored for service operation. Presence information may include profile and presence identifiers, status, display text, joinability, and update or expiry times, and is shared with accepted friends.
+
+WebRTC offers, answers, and ICE candidates are relayed to the selected friend while a signaling session is active. They are not intended for persistent storage or application logs. TURN credentials are short-lived. A TURN operator necessarily processes network addresses, connection metadata, and relayed traffic required to provide the relay.
+
+Operational logs and aggregate metrics may be retained for security, reliability, and abuse prevention. Minecraft access tokens, instance tokens, TURN credentials, and full signaling payloads must not be recorded in those logs.
+
+4. Acceptable use
+You may not impersonate another user, submit credentials without authorization, probe or disrupt the service, evade limits, automate abusive traffic, attack other users, or use the service to violate law or third-party rights. Access may be limited or terminated to protect users and infrastructure.
+
+Users are advised to connect to this API through the official NetherLink mod maintained by MUYUTwilighter: https://github.com/MUYUTwilighter/NetherLink, https://www.curseforge.com/minecraft/mc-mods/netherlink-nli, or https://modrinth.com/mod/netherlink-nli. Unofficial clients may behave unexpectedly, misuse credentials, bypass client-side safeguards, or expose users to compatibility and security risks.
+
+5. Peer-to-peer connections
+Joining a world may reveal network addresses to peers or TURN infrastructure. World owners control their worlds and are responsible for access decisions, content, backups, and player conduct. NetherLink cannot guarantee peer identity beyond the Minecraft profile verification performed at instance registration.
+
+6. Availability and security
+The service is provided on an as-available basis. Features may change, fail, or be suspended, and uninterrupted operation or successful peer-to-peer connectivity is not guaranteed. Keep issued instance tokens private and close instances you no longer use. Report suspected credential exposure promptly.
+
+7. Third-party services
+Minecraft, Microsoft identity services, network providers, and independently operated TURN nodes are third-party services governed by their own terms and policies. NetherLink is not affiliated with or endorsed by Mojang Studios or Microsoft.
+
+8. Disclaimer and liability
+To the maximum extent permitted by law, the service is provided without warranties, and the operator is not liable for indirect, incidental, special, consequential, or game-data losses arising from use, interruption, peer conduct, or third-party services. Rights that cannot lawfully be excluded remain unaffected.
+
+9. Changes and contact
+These terms may be updated when the service or legal requirements change. The current text and effective date are returned by this endpoint. Questions or reports may be sent through https://muyucloud.cool/ or https://github.com/MUYUTwilighter.

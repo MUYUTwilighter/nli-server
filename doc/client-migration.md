@@ -13,6 +13,11 @@ Instance registration performs an initial best-effort official synchronization. 
 the current account token as `X-Minecraft-Access-Token`. The server verifies that it belongs to the instance profile,
 uses it for exactly one official friends request, and discards it.
 
+For Minecraft 26.2, check the cached `PlayerSocialManager` friend-list state before using NLI friend features. After
+user confirmation, call `PUT /v1/friends/settings` with both values enabled, then set the matching local manager flags
+so the running client reflects the official update without a restart. `GET /v1/friends/settings` can refresh those
+flags from the official account attributes when the cached client state is uncertain.
+
 The existing WebRTC handshake message model can remain mostly unchanged. The transport envelope should route by
 `profile_id + presence_id` so a friend can choose a specific running instance to join.
 

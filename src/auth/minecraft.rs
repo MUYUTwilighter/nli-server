@@ -21,6 +21,7 @@ pub struct MinecraftProfileClient {
 pub struct MinecraftSocialClient {
     http: Client,
     friends_url: Url,
+    player_attributes_url: Url,
 }
 
 impl MinecraftProfileClient {
@@ -120,8 +121,12 @@ impl MinecraftAuthClient {
 }
 
 impl MinecraftSocialClient {
-    pub fn new(http: Client, friends_url: Url) -> Self {
-        Self { http, friends_url }
+    pub fn new(http: Client, friends_url: Url, player_attributes_url: Url) -> Self {
+        Self {
+            http,
+            friends_url,
+            player_attributes_url,
+        }
     }
 
     pub async fn friends(
@@ -175,6 +180,58 @@ impl MinecraftSocialClient {
             OfficialFriendUpdate::by_id(profile_id, "REMOVE"),
         )
         .await
+    }
+
+    pub async fn update_friend_settings(
+        &self,
+        access_token: &SecretString,
+        friends_enabled: bool,
+        accept_invites: bool,
+    ) -> Result<(), MinecraftSocialError> {
+        let response = self
+            .http
+            .post(self.player_attributes_url.clone())
+            .bearer_auth(access_token.expose_secret())
+            .json(&OfficialUserAttributesUpdate {
+                friends_preferences: OfficialFriendsPreferences {
+                    friends: toggle_value(friends_enabled),
+                    accept_invites: toggle_value(accept_invites),
+                },
+            })
+            .send()
+            .await
+            .map_err(MinecraftSocialError::Request)?;
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            StatusCode::UNAUTHORIZED => Err(MinecraftSocialError::InvalidToken),
+            StatusCode::FORBIDDEN => Err(MinecraftSocialError::Forbidden),
+            StatusCode::TOO_MANY_REQUESTS => Err(MinecraftSocialError::RateLimited),
+            status => Err(MinecraftSocialError::UpstreamStatus(status)),
+        }
+    }
+
+    pub async fn friend_settings(
+        &self,
+        access_token: &SecretString,
+    ) -> Result<OfficialFriendSettings, MinecraftSocialError> {
+        let response = self
+            .http
+            .get(self.player_attributes_url.clone())
+            .bearer_auth(access_token.expose_secret())
+            .send()
+            .await
+            .map_err(MinecraftSocialError::Request)?;
+        match response.status() {
+            status if status.is_success() => response
+                .json::<OfficialUserAttributes>()
+                .await
+                .map(|attributes| attributes.friends_preferences.into())
+                .map_err(MinecraftSocialError::InvalidResponse),
+            StatusCode::UNAUTHORIZED => Err(MinecraftSocialError::InvalidToken),
+            StatusCode::FORBIDDEN => Err(MinecraftSocialError::Forbidden),
+            StatusCode::TOO_MANY_REQUESTS => Err(MinecraftSocialError::RateLimited),
+            status => Err(MinecraftSocialError::UpstreamStatus(status)),
+        }
     }
 
     async fn update_friends(
@@ -250,6 +307,64 @@ impl<'a> OfficialFriendUpdate<'a> {
             update_type,
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficialUserAttributesUpdate {
+    friends_preferences: OfficialFriendsPreferences,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficialFriendsPreferences {
+    friends: &'static str,
+    accept_invites: &'static str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficialUserAttributes {
+    friends_preferences: OfficialFriendsPreferencesRead,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficialFriendsPreferencesRead {
+    friends: OfficialToggle,
+    accept_invites: OfficialToggle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfficialFriendSettings {
+    pub friends_enabled: bool,
+    pub accept_invites: bool,
+}
+
+impl From<OfficialFriendsPreferencesRead> for OfficialFriendSettings {
+    fn from(preferences: OfficialFriendsPreferencesRead) -> Self {
+        Self {
+            friends_enabled: preferences.friends.enabled(),
+            accept_invites: preferences.accept_invites.enabled(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum OfficialToggle {
+    Enabled,
+    Disabled,
+}
+
+impl OfficialToggle {
+    const fn enabled(&self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+const fn toggle_value(enabled: bool) -> &'static str {
+    if enabled { "ENABLED" } else { "DISABLED" }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -380,46 +495,86 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let friend_id = Uuid::new_v4();
         let expected_id = friend_id;
-        let app = Router::new().route(
-            "/friends",
-            get(move |headers: HeaderMap| async move {
-                assert_eq!(
-                    headers.get("authorization").unwrap(),
-                    "Bearer minecraft-token"
-                );
-                Json(json!({
-                    "friends": [{ "profileId": expected_id, "name": "Friend" }],
-                    "incomingRequests": [],
-                    "outgoingRequests": []
-                }))
-            })
-            .put(
-                move |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+        let app = Router::new()
+            .route(
+                "/friends",
+                get(move |headers: HeaderMap| async move {
                     assert_eq!(
                         headers.get("authorization").unwrap(),
                         "Bearer minecraft-token"
                     );
-                    assert!(body.get("name").is_some() || body.get("profileId").is_some());
-                    assert!(body["updateType"] == "ADD" || body["updateType"] == "REMOVE");
                     Json(json!({
-                        "friends": [{ "profileId": friend_id, "name": "Friend" }],
+                        "friends": [{ "profileId": expected_id, "name": "Friend" }],
                         "incomingRequests": [],
                         "outgoingRequests": []
                     }))
-                },
-            ),
-        );
+                })
+                .put(
+                    move |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(
+                            headers.get("authorization").unwrap(),
+                            "Bearer minecraft-token"
+                        );
+                        assert!(body.get("name").is_some() || body.get("profileId").is_some());
+                        assert!(body["updateType"] == "ADD" || body["updateType"] == "REMOVE");
+                        Json(json!({
+                            "friends": [{ "profileId": friend_id, "name": "Friend" }],
+                            "incomingRequests": [],
+                            "outgoingRequests": []
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/attributes",
+                get(|headers: HeaderMap| async move {
+                    assert_eq!(
+                        headers.get("authorization").unwrap(),
+                        "Bearer minecraft-token"
+                    );
+                    Json(json!({
+                        "friendsPreferences": {
+                            "friends": "ENABLED",
+                            "acceptInvites": "DISABLED"
+                        }
+                    }))
+                })
+                .post(
+                    |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(
+                            headers.get("authorization").unwrap(),
+                            "Bearer minecraft-token"
+                        );
+                        assert_eq!(body["friendsPreferences"]["friends"], "ENABLED");
+                        assert_eq!(body["friendsPreferences"]["acceptInvites"], "DISABLED");
+                        StatusCode::NO_CONTENT
+                    },
+                ),
+            );
         let server = tokio::spawn(async move { axum::serve(listener, app).await });
         let client = MinecraftSocialClient::new(
             Client::new(),
             format!("http://{address}/friends").parse().unwrap(),
+            format!("http://{address}/attributes").parse().unwrap(),
         );
         let token = SecretString::from("minecraft-token".to_owned());
         let snapshot = client.friends(&token).await.unwrap();
         assert_eq!(snapshot.friends[0].profile_id, friend_id);
+        let settings = client.friend_settings(&token).await.unwrap();
+        assert_eq!(
+            settings,
+            OfficialFriendSettings {
+                friends_enabled: true,
+                accept_invites: false,
+            }
+        );
         client.add_friend_by_name(&token, "Friend").await.unwrap();
         client.add_friend_by_id(&token, friend_id).await.unwrap();
         client.remove_friend_by_id(&token, friend_id).await.unwrap();
+        client
+            .update_friend_settings(&token, true, false)
+            .await
+            .unwrap();
         server.abort();
     }
 }

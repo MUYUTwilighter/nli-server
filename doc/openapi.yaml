@@ -232,6 +232,68 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /v1/friends/settings:
+    get:
+      tags: [Friends]
+      operationId: getOfficialFriendSettings
+      summary: Get official Minecraft friend-network settings
+      description: Reads the current settings from GET /player/attributes.
+      security:
+        - instanceToken: []
+      parameters:
+        - $ref: "#/components/parameters/MinecraftFriendToken"
+      responses:
+        "200":
+          description: Current official friend-network settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendSettingsResponse"
+        "401":
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    put:
+      tags: [Friends]
+      operationId: updateOfficialFriendSettings
+      summary: Update official Minecraft friend-network settings
+      description: |
+        Proxies the requested settings to POST /player/attributes. The client must update its cached
+        PlayerSocialManager state after success; Minecraft reads account attributes only during startup.
+      security:
+        - instanceToken: []
+      parameters:
+        - $ref: "#/components/parameters/MinecraftFriendToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FriendSettingsRequest"
+      responses:
+        "200":
+          description: Official friend-network settings were updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FriendSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/FriendUnauthorized"
+        "403":
+          $ref: "#/components/responses/OfficialFriendsForbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /v1/friends/requests:
     post:
       tags: [ Friends ]
@@ -620,8 +682,13 @@ components:
     FriendSnapshotResponse:
       type: object
       additionalProperties: false
-      required: [ friends, incomingRequests, outgoingRequests ]
+      required: [ selfPresences, friends, incomingRequests, outgoingRequests ]
       properties:
+        selfPresences:
+          type: array
+          description: Every active runtime Presence for the caller's own profile.
+          items:
+            $ref: "#/components/schemas/Presence"
         friends:
           type: array
           items:
@@ -669,6 +736,26 @@ components:
     FriendSource:
       type: string
       const: minecraft_sync
+
+    FriendSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [friendsEnabled, acceptInvites]
+      properties:
+        friendsEnabled:
+          type: boolean
+        acceptInvites:
+          type: boolean
+
+    FriendSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [friendsEnabled, acceptInvites]
+      properties:
+        friendsEnabled:
+          type: boolean
+        acceptInvites:
+          type: boolean
 
     FriendMutationResponse:
       type: object

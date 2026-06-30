@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{
+    env, fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use axum::http::HeaderValue;
@@ -21,10 +26,18 @@ pub struct AppConfig {
     pub cors_allow_origin: Option<HeaderValue>,
     pub trust_proxy_headers: bool,
     pub metrics_token: Option<SecretString>,
+    pub terms: TermsConfig,
     pub minecraft_profile_url: Url,
     pub minecraft_profile_by_name_url: Url,
     pub minecraft_profile_by_id_url: Url,
     pub minecraft_friends_url: Url,
+    pub minecraft_player_attributes_url: Url,
+}
+
+#[derive(Clone)]
+pub struct TermsConfig {
+    pub en: String,
+    pub zh: String,
 }
 
 impl AppConfig {
@@ -62,6 +75,7 @@ impl AppConfig {
                 .transpose()?,
             trust_proxy_headers: bool_var("NLI_TRUST_PROXY_HEADERS", false)?,
             metrics_token: optional_secret_var("NLI_METRICS_TOKEN")?,
+            terms: TermsConfig::from_env()?,
             minecraft_profile_url: env::var("MINECRAFT_PROFILE_URL")
                 .unwrap_or_else(|_| {
                     "https://api.minecraftservices.com/minecraft/profile".to_owned()
@@ -80,6 +94,12 @@ impl AppConfig {
                 .unwrap_or_else(|_| "https://api.minecraftservices.com/friends".to_owned())
                 .parse()
                 .context("MINECRAFT_FRIENDS_URL must be a valid URL")?,
+            minecraft_player_attributes_url: env::var("MINECRAFT_PLAYER_ATTRIBUTES_URL")
+                .unwrap_or_else(|_| {
+                    "https://api.minecraftservices.com/player/attributes".to_owned()
+                })
+                .parse()
+                .context("MINECRAFT_PLAYER_ATTRIBUTES_URL must be a valid URL")?,
         };
         config.validate()?;
         Ok(config)
@@ -109,6 +129,10 @@ impl AppConfig {
                     &self.minecraft_profile_by_id_url,
                 ),
                 ("MINECRAFT_FRIENDS_URL", &self.minecraft_friends_url),
+                (
+                    "MINECRAFT_PLAYER_ATTRIBUTES_URL",
+                    &self.minecraft_player_attributes_url,
+                ),
             ] {
                 if url.scheme() != "https" {
                     anyhow::bail!("{name} must use HTTPS in production");
@@ -125,6 +149,18 @@ impl AppConfig {
             validate_production_turn_urls(&self.turn_urls)?;
         }
         Ok(())
+    }
+}
+
+impl TermsConfig {
+    fn from_env() -> Result<Self> {
+        let directory = env::var("NLI_TERMS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("config/terms"));
+        Ok(Self {
+            en: read_terms_file(&directory, "en")?,
+            zh: read_terms_file(&directory, "zh")?,
+        })
     }
 }
 
@@ -148,6 +184,24 @@ fn directory_url(name: &str, default: &str) -> Result<Url> {
         url.set_path(&path);
     }
     Ok(url)
+}
+
+fn read_terms_file(directory: &Path, language: &str) -> Result<String> {
+    let path = directory.join(format!("{language}.txt"));
+    let text = fs::read_to_string(&path).with_context(|| {
+        format!(
+            "failed to read {language} terms from {}",
+            display_path(&path)
+        )
+    })?;
+    if text.trim().is_empty() {
+        anyhow::bail!("{} must not be empty", display_path(&path));
+    }
+    Ok(text)
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn required_var(name: &str) -> Result<String> {

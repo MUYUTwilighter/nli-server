@@ -61,6 +61,8 @@ Accept-Language: zh-CN, en;q=0.8
 
 The public endpoint returns the current Version 1 service terms as `text/plain; charset=utf-8`. It supports English and
 Chinese, sets `Content-Language` to `en` or `zh`, and defaults to English when no supported language is requested.
+The text is loaded from `NLI_TERMS_DIR`, defaulting to `config/terms`. The service reads `en.txt` and `zh.txt` from
+that directory. Edit those files and restart the service to publish updated terms.
 
 A client that needs to select the language explicitly may use a JSON body. The body takes precedence over
 `Accept-Language`; regional tags such as `en-US` and `zh-CN` are accepted.
@@ -165,6 +167,19 @@ Response:
 
 ```json
 {
+  "selfPresences": [
+    {
+      "profileId": "caller-uuid",
+      "presenceId": "caller-public-presence-id",
+      "status": "HOSTING",
+      "joinable": true,
+      "sessionId": "caller-session-id",
+      "endpoint": null,
+      "displayText": "Authorized multiplayer server",
+      "updatedAt": "2026-06-01T15:03:35Z",
+      "expiresAt": "2026-06-01T15:04:35Z"
+    }
+  ],
   "friends": [
     {
       "profileId": "uuid",
@@ -192,8 +207,43 @@ Response:
 
 Before assembling this response, the backend refreshes and transactionally mirrors the complete official friend
 snapshot. Returned official names are cached in Redis. `presences` contains every active NetherLink runtime instance
-for that friend and is empty when the friend has none. The caller's own Presence and pending-request Presence are not
-included.
+for that friend and is empty when the friend has none. `selfPresences` contains every active runtime Presence for the
+caller profile, including worlds or authorized multiplayer servers published by another local instance of the same
+account. Pending-request Presence is not included.
+
+## Official Friend Settings
+
+```http
+GET /v1/friends/settings
+Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
+```
+
+Returns the current official Minecraft friend-network settings:
+
+```json
+{
+  "friendsEnabled": true,
+  "acceptInvites": true
+}
+```
+
+```http
+PUT /v1/friends/settings
+Authorization: Bearer <instance_token>
+X-Minecraft-Access-Token: <minecraft_access_token>
+Content-Type: application/json
+
+{
+  "friendsEnabled": true,
+  "acceptInvites": true
+}
+```
+
+Updates the official Minecraft `friendsPreferences` through `/player/attributes`. Enabling both values is equivalent
+to turning on the 26.2 Friends List and Allow Requests settings. The response echoes the applied values. After success,
+the client must update its cached `PlayerSocialManager` flags or restart; the original client fetches account attributes
+only during startup.
 
 ## Add Friend
 

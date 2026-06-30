@@ -42,6 +42,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/instances/renew", post(instances::renew))
         .route("/v1/instances/current", delete(instances::close))
         .route("/v1/friends", get(friends::snapshot))
+        .route(
+            "/v1/friends/settings",
+            get(friends::settings).put(friends::update_settings),
+        )
         .route("/v1/friends/requests", post(friends::add_request))
         .route(
             "/v1/friends/requests/{profile_id}",

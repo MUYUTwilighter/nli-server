@@ -35,6 +35,8 @@ async fn friend_api_lifecycle() -> Result<()> {
     let player_b = Uuid::new_v4();
     let official_removals = Arc::new(AtomicUsize::new(0));
     let official_removals_server = official_removals.clone();
+    let settings_updates = Arc::new(AtomicUsize::new(0));
+    let settings_updates_server = settings_updates.clone();
     let official_state = Arc::new(Mutex::new(OfficialTestState::default()));
     let official_get_state = official_state.clone();
     let official_put_state = official_state.clone();
@@ -125,6 +127,28 @@ async fn friend_api_lifecycle() -> Result<()> {
                         Json(official_snapshot(&state, token, player_a, player_b))
                     }
                 }),
+            )
+            .route(
+                "/player/attributes",
+                get(|headers: HeaderMap| async move {
+                    assert_eq!(minecraft_token(&headers), "player-a-token");
+                    Json(json!({
+                        "friendsPreferences": {
+                            "friends": "ENABLED",
+                            "acceptInvites": "DISABLED"
+                        }
+                    }))
+                })
+                .post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let settings_updates = settings_updates_server.clone();
+                    async move {
+                        assert_eq!(minecraft_token(&headers), "player-a-token");
+                        assert_eq!(body["friendsPreferences"]["friends"], "ENABLED");
+                        assert_eq!(body["friendsPreferences"]["acceptInvites"], "ENABLED");
+                        settings_updates.fetch_add(1, Ordering::SeqCst);
+                        reqwest::StatusCode::NO_CONTENT
+                    }
+                }),
             );
         axum::serve(minecraft_listener, app).await
     });
@@ -137,6 +161,8 @@ async fn friend_api_lifecycle() -> Result<()> {
     config.minecraft_profile_by_id_url =
         format!("http://{minecraft_address}/profiles/by-id/").parse()?;
     config.minecraft_friends_url = format!("http://{minecraft_address}/friends").parse()?;
+    config.minecraft_player_attributes_url =
+        format!("http://{minecraft_address}/player/attributes").parse()?;
     let database = db::connect(&config.database_url).await?;
     cleanup_profiles(&database, &[player_a, player_b]).await?;
     let redis = RedisStore::connect(&config.redis_url).await?;
@@ -152,6 +178,28 @@ async fn friend_api_lifecycle() -> Result<()> {
     let client = reqwest::Client::new();
     let player_a_instance = register_instance(&client, address, "player-a-token").await?;
     let player_b_instance = register_instance(&client, address, "player-b-token").await?;
+
+    let response = client
+        .get(format!("http://{address}/v1/friends/settings"))
+        .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body = response.json::<Value>().await?;
+    assert_eq!(body["friendsEnabled"], true);
+    assert_eq!(body["acceptInvites"], false);
+
+    let response = client
+        .put(format!("http://{address}/v1/friends/settings"))
+        .bearer_auth(&player_a_instance)
+        .header("x-minecraft-access-token", "player-a-token")
+        .json(&json!({ "friendsEnabled": true, "acceptInvites": true }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await?["friendsEnabled"], true);
+    assert_eq!(settings_updates.load(Ordering::SeqCst), 1);
 
     let response = client
         .get(format!("http://{address}/v1/friends"))
@@ -217,6 +265,10 @@ async fn friend_api_lifecycle() -> Result<()> {
     assert_eq!(snapshot_a["friends"][0]["profileId"], player_b.to_string());
     assert_eq!(snapshot_a["friends"][0]["name"], "PlayerB");
     assert_eq!(snapshot_a["friends"][0]["source"], "minecraft_sync");
+    let initial_self_presences = snapshot_a["selfPresences"].as_array().unwrap();
+    assert_eq!(initial_self_presences.len(), 1);
+    assert_eq!(initial_self_presences[0]["profileId"], player_a.to_string());
+    assert_eq!(initial_self_presences[0]["status"], "ONLINE");
     let initial_presences = snapshot_a["friends"][0]["presences"].as_array().unwrap();
     assert_eq!(initial_presences.len(), 1);
     assert_eq!(initial_presences[0]["profileId"], player_b.to_string());
@@ -239,6 +291,18 @@ async fn friend_api_lifecycle() -> Result<()> {
         )
         .await?;
     let body = friend_snapshot(&client, address, &player_a_instance, "player-a-token").await?;
+    let self_presences = body["selfPresences"].as_array().unwrap();
+    assert_eq!(self_presences.len(), 2);
+    assert!(
+        self_presences
+            .iter()
+            .all(|presence| presence["profileId"] == player_a.to_string())
+    );
+    assert!(
+        self_presences
+            .iter()
+            .any(|presence| presence["presenceId"] == caller_presence_id)
+    );
     let presences = body["friends"][0]["presences"].as_array().unwrap();
     assert_eq!(presences.len(), 2);
     assert!(

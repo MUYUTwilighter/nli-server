@@ -50,8 +50,11 @@ impl AppState {
             config.minecraft_profile_by_name_url.clone(),
             config.minecraft_profile_by_id_url.clone(),
         );
-        let minecraft_social =
-            MinecraftSocialClient::new(http.clone(), config.minecraft_friends_url.clone());
+        let minecraft_social = MinecraftSocialClient::new(
+            http.clone(),
+            config.minecraft_friends_url.clone(),
+            config.minecraft_player_attributes_url.clone(),
+        );
 
         Self {
             config: Arc::new(config),

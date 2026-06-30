@@ -62,10 +62,12 @@ async fn render_snapshot(
     profile_ids.sort_unstable();
     profile_ids.dedup();
     let names = resolve_names(state, profile_ids).await?;
+    let self_presences = sorted_presences_for_profile(state, caller_profile_id).await?;
     let mut presences =
         resolve_friend_presences(state, &snapshot.friends, caller_profile_id).await?;
 
     Ok(Json(FriendSnapshotResponse {
+        self_presences,
         friends: snapshot
             .friends
             .into_iter()
@@ -117,6 +119,46 @@ pub async fn add_request(
         result: "SUCCESS",
         relationship,
         official_sync: "SUCCESS",
+    }))
+}
+
+pub async fn update_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<FriendSettingsRequest>,
+) -> Result<Json<FriendSettingsResponse>, ApiError> {
+    let (caller, access_token) = authenticate_official_friend_request(&state, &headers).await?;
+    enforce_mutation_rate_limit(&state, caller.profile_id).await?;
+    state
+        .minecraft_social
+        .update_friend_settings(
+            &access_token,
+            request.friends_enabled,
+            request.accept_invites,
+        )
+        .await
+        .map_err(|error| social_error("settings", error))?;
+
+    Ok(Json(FriendSettingsResponse {
+        friends_enabled: request.friends_enabled,
+        accept_invites: request.accept_invites,
+    }))
+}
+
+pub async fn settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<FriendSettingsResponse>, ApiError> {
+    let (_, access_token) = authenticate_official_friend_request(&state, &headers).await?;
+    let settings = state
+        .minecraft_social
+        .friend_settings(&access_token)
+        .await
+        .map_err(|error| social_error("settings", error))?;
+
+    Ok(Json(FriendSettingsResponse {
+        friends_enabled: settings.friends_enabled,
+        accept_invites: settings.accept_invites,
     }))
 }
 
@@ -192,9 +234,24 @@ pub struct AddFriendRequest {
     name: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FriendSettingsRequest {
+    friends_enabled: bool,
+    accept_invites: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendSettingsResponse {
+    friends_enabled: bool,
+    accept_invites: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FriendSnapshotResponse {
+    self_presences: Vec<Presence>,
     friends: Vec<FriendResponse>,
     incoming_requests: Vec<FriendRequestResponse>,
     outgoing_requests: Vec<FriendRequestResponse>,
@@ -258,15 +315,23 @@ async fn resolve_friend_presences(
     let mut result = HashMap::with_capacity(friendships.len());
     for friendship in friendships {
         let profile_id = friend_profile_id(friendship, caller_profile_id);
-        let mut presences = state
-            .redis
-            .presences_for_profile(profile_id)
-            .await
-            .map_err(redis_error)?;
-        presences.sort_unstable_by(|left, right| left.presence_id.cmp(&right.presence_id));
+        let presences = sorted_presences_for_profile(state, profile_id).await?;
         result.insert(profile_id, presences);
     }
     Ok(result)
+}
+
+async fn sorted_presences_for_profile(
+    state: &AppState,
+    profile_id: Uuid,
+) -> Result<Vec<Presence>, ApiError> {
+    let mut presences = state
+        .redis
+        .presences_for_profile(profile_id)
+        .await
+        .map_err(redis_error)?;
+    presences.sort_unstable_by(|left, right| left.presence_id.cmp(&right.presence_id));
+    Ok(presences)
 }
 
 async fn resolve_names(
