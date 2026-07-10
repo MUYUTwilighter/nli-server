@@ -33,18 +33,28 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
     let initiator_profile = Uuid::new_v4();
     let host_profile = Uuid::new_v4();
     let outsider_profile = Uuid::new_v4();
+    let self_profile = Uuid::new_v4();
     let initiator_presence = format!("ws-initiator-{initiator_profile}");
     let host_presence = format!("ws-host-{host_profile}");
     let outsider_presence = format!("ws-outsider-{outsider_profile}");
+    let self_joiner_presence = format!("ws-self-joiner-{self_profile}");
+    let self_host_presence = format!("ws-self-host-{self_profile}");
     let initiator_token = format!("ws-token-{initiator_profile}");
     let host_token = format!("ws-token-{host_profile}");
     let outsider_token = format!("ws-token-{outsider_profile}");
+    let self_joiner_token = format!("ws-token-self-joiner-{self_profile}");
+    let self_host_token = format!("ws-token-self-host-{self_profile}");
 
     let config = AppConfig::from_env()?;
     let database = db::connect(&config.database_url).await?;
     cleanup_profiles(
         &database,
-        &[initiator_profile, host_profile, outsider_profile],
+        &[
+            initiator_profile,
+            host_profile,
+            outsider_profile,
+            self_profile,
+        ],
     )
     .await?;
     FriendRepository::new(database.clone())
@@ -69,6 +79,22 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
         false,
     )
     .await?;
+    put_instance(
+        &redis,
+        self_profile,
+        &self_joiner_presence,
+        &self_joiner_token,
+        false,
+    )
+    .await?;
+    put_instance(
+        &redis,
+        self_profile,
+        &self_host_presence,
+        &self_host_token,
+        true,
+    )
+    .await?;
 
     let state = AppState::new(config, database.clone(), redis.clone())?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -78,7 +104,29 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
     let mut host = connect(address, &host_token).await?;
     let mut initiator = connect(address, &initiator_token).await?;
     let mut outsider = connect(address, &outsider_token).await?;
+    let mut self_host = connect(address, &self_host_token).await?;
+    let mut self_joiner = connect(address, &self_joiner_token).await?;
     let session_id = Uuid::new_v4().to_string();
+    let self_session_id = Uuid::new_v4().to_string();
+
+    send(
+        &mut self_joiner,
+        frame(
+            "self-join",
+            "JOIN_REQUEST",
+            self_profile,
+            &self_host_presence,
+            &self_session_id,
+            json!({ "world": "self" }),
+        ),
+    )
+    .await?;
+    let self_forwarded = receive(&mut self_host).await?;
+    assert_eq!(self_forwarded["type"], "JOIN_REQUEST");
+    assert_eq!(self_forwarded["from"], self_profile.to_string());
+    assert_eq!(self_forwarded["fromPresenceId"], self_joiner_presence);
+    assert_eq!(self_forwarded["to"], self_profile.to_string());
+    assert_eq!(self_forwarded["toPresenceId"], self_host_presence);
 
     send(
         &mut initiator,
@@ -378,13 +426,23 @@ async fn signaling_ws_relays_join_and_webrtc_messages() -> Result<()> {
     assert!(matches!(close, Message::Close(_)));
 
     outsider.close(None).await?;
+    self_host.close(None).await?;
+    self_joiner.close(None).await?;
     redis.delete_signaling_session(&session_id).await?;
+    redis.delete_signaling_session(&self_session_id).await?;
     cleanup_instance(&redis, &initiator_presence, &initiator_token).await?;
     cleanup_instance(&redis, &host_presence, &host_token).await?;
     cleanup_instance(&redis, &outsider_presence, &outsider_token).await?;
+    cleanup_instance(&redis, &self_joiner_presence, &self_joiner_token).await?;
+    cleanup_instance(&redis, &self_host_presence, &self_host_token).await?;
     cleanup_profiles(
         &database,
-        &[initiator_profile, host_profile, outsider_profile],
+        &[
+            initiator_profile,
+            host_profile,
+            outsider_profile,
+            self_profile,
+        ],
     )
     .await?;
     server.abort();

@@ -248,10 +248,11 @@ async fn process_message(
 ) -> Result<ForwardMessage, SignalError> {
     validate_envelope(&envelope)?;
     enforce_rate_limit(state, sender.profile_id, envelope.to).await?;
-    if !FriendRepository::new(state.db.clone())
-        .are_friends(sender.profile_id, envelope.to)
-        .await
-        .map_err(SignalError::storage)?
+    if sender.profile_id != envelope.to
+        && !FriendRepository::new(state.db.clone())
+            .are_friends(sender.profile_id, envelope.to)
+            .await
+            .map_err(SignalError::storage)?
     {
         return Err(SignalError::new(
             "NOT_FRIENDS",
