@@ -16,8 +16,8 @@ small service layer that keeps persistent data narrow and stores runtime multipl
 - [OpenAPI Specification](openapi.yaml): machine-readable OpenAPI 3.1 definition for all REST endpoints and DTOs.
 - [Signaling API Draft](signaling-api.md): WebSocket envelope, forwarding rules, and signaling errors.
 - [TURN Auth](turn-auth.md): temporary TURN credential endpoint requirements.
-- [coturn Deployment](../deploy/coturn/README.md): production relay configuration, firewall rules, and verification.
-- [Nginx Deployment](../deploy/nginx/README.md): HTTPS and WebSocket reverse proxy for `nli-api.muyucloud.cool`.
+- [coturn Deployment](../../deploy/coturn/README.md): production relay configuration, firewall rules, and verification.
+- [Nginx Deployment](../../deploy/nginx/README.md): HTTPS and WebSocket reverse proxy for `nli-api.muyucloud.cool`.
 - [Official API Bridge](official-api-bridge.md): official friend source-of-truth and local projection behavior.
 - [Security](security.md): security requirements and recommended rate limits.
 - [MVP Order](mvp-order.md): suggested implementation order.

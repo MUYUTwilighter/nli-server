@@ -50,4 +50,4 @@ realm=turn.example.com
 ```
 
 The complete Ubuntu/Alibaba Cloud deployment template, firewall ports, NAT mapping, and verification procedure are in
-[`deploy/coturn/README.md`](../deploy/coturn/README.md).
+[`deploy/coturn/README.md`](../../deploy/coturn/README.md).
