@@ -905,6 +905,7 @@ rest_api.md      data_model.md
 | D-328 | — | Gate F final review | 不改变81/94表面的前提下收窄5个Signaling Operation错误状态；明确不可关联坏帧直接关闭、TURN同five-tuple单live Slot、Quota Bucket模式/window/GC及Permit→Slot→Grant→Receipt→Session清理顺序 | `signaling.md`; `rest_api.md`; `data_model.md`; `openapi.yaml` | Final consistency hardening |
 | D-329 | — | Implementation preparation | Gate F契约以commit `3b4f329`和annotated tag `v2-design-gate-f`独立冻结；提交只含12个`doc/v2`设计文件，既有Cargo 0.2.0工作区修改未混入 | Git history | Baseline provenance |
 | D-330 | — | Implementation preparation | v2使用全新独立PostgreSQL Database与`migrations/v2` journal，不迁移v1数据；按CI/平台→30 Identity→30 Provider/Friend→29 Runtime/Join→Gate E→5 Signaling→隐藏Relay→客户端验收→切流/删除v1推进 | `implementation_plan.md` | Implementation sequence |
+| D-331 | — | Implementation preparation | v2绿地部署到新服务器且不继承任何v1业务数据；新旧环境不共享DB/Redis/Secret/备份，旧服切流时只读且不作v2故障转移；API/PG/易失Redis/TURN按角色和网络压力隔离 | `implementation_plan.md` | Infrastructure / cutover |
 
 
 ## 进度记录
@@ -913,6 +914,7 @@ rest_api.md      data_model.md
 
 | 日期 | 阶段 | 完成内容 | 遗留问题 | 下一步 |
 | --- | --- | --- | --- | --- |
+| — | 实现准备 | 根据用户确认补充新服务器绿地部署：v1数据完全不继承，新旧DB/Redis/Secret/备份隔离，旧服只读下线，v2首笔生产写入后只允许v2回退/forward-fix；新增角色拓扑、网络容量、混合负载和TURN故障域门槛 | 新服务器供应商、规格和客户端迁移公告尚待实施阶段确定 | 实现仍未开始；Phase 0先建立容量/契约验收骨架 |
 | — | 实现准备 | 创建仅含12个v2设计文件的基线提交`3b4f329`和tag `v2-design-gate-f`；完成`implementation_plan.md`，吸收Reviewer对migration journal、Outbox/Audit故障方向、Route线性化、Relay清理、客户端验收和切流策略的全部阻塞修正 | 当前Cargo 0.2.0修改仍未提交且不属于设计基线；客户端仓库、自定义TURN Adapter和真实基础设施仍是后续实现输入 | 保持IMPLEMENTATION_PLANNED_NOT_STARTED；待明确授权后只执行Phase 0–1 |
 | — | Gate F 最终审阅 | 三路只读审阅因上下文上限未形成正式输出；主审从持久轨迹提取并逐项核实，修正Quota窗口歧义、five-tuple双Slot、Relay清理/FK顺序、无message_id错误关联及OpenAPI额外403/413/422；YAML/1422本地引用/81 Paths/94 Operations/状态码集合/AJV正反例/Markdown链接/diff检查通过，Redocly有效且仍为8个已解释Warning | 独立Reviewer运行稳定性不足；真实TURN/WebRTC与数据库约束仍属于实现验收，不在本轮执行 | 最终审阅无设计 blocker；保持IMPLEMENTATION_PAUSED |
 | — | Phase 9 / Gate F | #108完成：总体状态、D-324–D-327、正式基线、Phase 9完成标准和后续实现入口已同步；全套详细设计与Gate F冻结 | Redocly保留8个预期Warning；真实TURN/WebRTC、多节点、撤销、配额、崩溃和隐私验证属于实现Gate | 按用户要求暂停；仅在明确授权后建立新的实现计划 |
