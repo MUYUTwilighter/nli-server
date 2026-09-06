@@ -906,6 +906,8 @@ rest_api.md      data_model.md
 | D-329 | — | Implementation preparation | Gate F契约以commit `3b4f329`和annotated tag `v2-design-gate-f`独立冻结；提交只含12个`doc/v2`设计文件，既有Cargo 0.2.0工作区修改未混入 | Git history | Baseline provenance |
 | D-330 | — | Implementation preparation | v2使用全新独立PostgreSQL Database与`migrations/v2` journal，不迁移v1数据；按CI/平台→30 Identity→30 Provider/Friend→29 Runtime/Join→Gate E→5 Signaling→隐藏Relay→客户端验收→切流/删除v1推进 | `implementation_plan.md` | Implementation sequence |
 | D-331 | — | Implementation preparation | v2绿地部署到新服务器且不继承任何v1业务数据；新旧环境不共享DB/Redis/Secret/备份，旧服切流时只读且不作v2故障转移；API/PG/易失Redis/TURN按角色和网络压力隔离 | `implementation_plan.md` | Infrastructure / cutover |
+| D-332 | — | Implementation preparation | v2应用版本固定为`0.2.0`；初始部署目标固定为`hangzhou-traffic`单机原生systemd，WSL锁版本构建后手工校验上传，不使用容器；为节省资源API与有界Worker同进程、v2使用一个整实例无持久Redis，当前单机生产Relay固定关闭 | `implementation_plan.md`; `Cargo.toml`; `Cargo.lock` | Version / deployment |
+| D-333 | — | Implementation preparation review | 手工发布在每次Migration前创建异机恢复点，contract Migration必须先真实恢复；v2无本地业务状态/磁盘spool，systemd使用依赖排序与硬化；每日/每周异机备份、24h RPO/4h RTO、原子软链接、锁定Redocly、Release Manifest和临时双机验收写入门禁 | `implementation_plan.md` | Deployment hardening |
 
 
 ## 进度记录
@@ -914,6 +916,8 @@ rest_api.md      data_model.md
 
 | 日期 | 阶段 | 完成内容 | 遗留问题 | 下一步 |
 | --- | --- | --- | --- | --- |
+| — | 实现准备复核 | 独立Reviewer确认81/94、PG权威、易失Redis、Relay关闭和分支策略无冲突；修正Migration前恢复点、systemd本地写/依赖、v1同机最坏假设、稳态异机备份、软链接原子性、Redocly锁定、WSL/CRLF、Release Manifest、单机SPOF和临时双机验收 | `hangzhou-traffic`实机架构/systemd/PostgreSQL unit名称仍须Phase 0探测；当前单机不满足生产Relay Gate | 单独提交0.2.0与计划，推送基线，建立Phase 0分支 |
+| — | 实现准备 | 用户确认v2即`0.2.0`，初始部署使用`hangzhou-traffic`；计划改为WSL原生依赖Gate/锁版本Release构建/SHA-256手工上传/原子软链接/systemd最小权限服务，全程不使用容器；单机资源约束下API与Worker同进程、v2 Redis整实例无持久化、Relay固定关闭 | 尚需实机确认架构、发行版/glibc、systemd版本和容量；这些列为Phase 0部署预检 | 完成独立复核后，单独提交版本与计划更新，再建立Phase 0分支 |
 | — | 实现准备 | 根据用户确认补充新服务器绿地部署：v1数据完全不继承，新旧DB/Redis/Secret/备份隔离，旧服只读下线，v2首笔生产写入后只允许v2回退/forward-fix；新增角色拓扑、网络容量、混合负载和TURN故障域门槛 | 新服务器供应商、规格和客户端迁移公告尚待实施阶段确定 | 实现仍未开始；Phase 0先建立容量/契约验收骨架 |
 | — | 实现准备 | 创建仅含12个v2设计文件的基线提交`3b4f329`和tag `v2-design-gate-f`；完成`implementation_plan.md`，吸收Reviewer对migration journal、Outbox/Audit故障方向、Route线性化、Relay清理、客户端验收和切流策略的全部阻塞修正 | 当前Cargo 0.2.0修改仍未提交且不属于设计基线；客户端仓库、自定义TURN Adapter和真实基础设施仍是后续实现输入 | 保持IMPLEMENTATION_PLANNED_NOT_STARTED；待明确授权后只执行Phase 0–1 |
 | — | Gate F 最终审阅 | 三路只读审阅因上下文上限未形成正式输出；主审从持久轨迹提取并逐项核实，修正Quota窗口歧义、five-tuple双Slot、Relay清理/FK顺序、无message_id错误关联及OpenAPI额外403/413/422；YAML/1422本地引用/81 Paths/94 Operations/状态码集合/AJV正反例/Markdown链接/diff检查通过，Redocly有效且仍为8个已解释Warning | 独立Reviewer运行稳定性不足；真实TURN/WebRTC与数据库约束仍属于实现验收，不在本轮执行 | 最终审阅无设计 blocker；保持IMPLEMENTATION_PAUSED |

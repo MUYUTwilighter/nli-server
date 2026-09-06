@@ -6,6 +6,10 @@
 >
 > 契约基线：OpenAPI 3.1.1，Gate E `77 Paths / 89 Operations`，Gate F 总计 `81 Paths / 94 Operations`
 >
+> 应用版本：`0.2.0`
+>
+> 初始生产目标：`hangzhou-traffic`，WSL 本地构建、手动上传、原生 systemd 运行，不使用容器
+>
 > 本文不是新 API 契约。若实现需要改变 `3b4f329:doc/v2/` 的冻结语义，必须显式重开对应 Gate，不能通过普通实现 PR 静默修改。
 
 ## 1. 目标
@@ -23,7 +27,7 @@
 - 不把 MC Profile 升级为 NLI/Minecraft 身份证明；
 - 不在服务端持久保存 SDP、ICE Candidate、网络地址、TURN Password 或 Peer Pin 原值；
 - 不用普通 coturn shared-secret 配置替代冻结的 Relay Authorizer；
-- 不假定新服务器的云厂商、规格、IP或最终拓扑已经选定；实现计划只冻结角色隔离、容量和验收要求。
+- 不在本阶段升级 `hangzhou-traffic` 硬件，也不引入Kubernetes、Docker或其他容器运行时；未来迁移到新服务器时沿用v2备份恢复和绿地部署流程。
 
 ## 3. 权威输入与适用范围
 
@@ -97,22 +101,41 @@ Manifest 从冻结 OpenAPI/REST 生成或由测试核对。不得把以下策略
 
 ### 4.6 发布与回滚
 
-- v2 绿地部署到新服务器，使用全新 PostgreSQL、普通 Redis、敏感易失 Redis和独立进程；不与旧服务器共享数据库、Redis、文件、Secret、备份或写模型；
+- v2在`hangzhou-traffic`绿地部署，使用全新PostgreSQL Database、一个v2专用无持久Redis实例和独立v2服务进程；不与v1共享逻辑Database/Schema、Redis进程/数据、Credential、文件或写模型；
 - v1账号、好友、实例、邀请码、Join、信令和TURN数据均不导入、不映射、不继承；v2用户需要建立新的账号与关系；
 - 生产 Gate E/F 路由按文档要求成组开放，不能把缺失路由伪装为94项已完成；
 - 切流采用DNS/反向代理指向通过容量和故障验收的新环境；观测期保留上一个已验证v2二进制和v2数据库恢复点；
 - v2接受第一笔生产写入前可以撤销切流；接受生产写入后不得回到v1而造成双写或丢弃v2事实，只能关闭功能、回退到兼容当前v2 Schema的前一v2版本或forward-fix；
-- 旧服务器在切流时进入只读/维护状态，仅按既定保留期保存v1历史并最终下线，不成为v2故障转移节点；
-- v1代码、测试和部署样例只在v2全量观测期通过后删除。
+- 无论v1当前是否也位于`hangzhou-traffic`，切流时v1都进入只读/维护状态且不成为v2故障转移；Phase 0实机清点其主机和依赖。若同机，v2可为节省资源共用PostgreSQL server process，但必须使用独立Database/owner/application role/备份；v2 Redis必须是独立无持久实例；
+- v1只读服务最长保留到v2全量切流后14天，随后停止进程；v1历史仅按既定离线保留策略保存，不导入v2；
+- v1代码、测试和部署样例只在v2全量观测期通过后删除；
+- v2生产数据库每日执行一次加密custom-format逻辑备份，并在每次Migration前额外创建恢复点；备份必须传输到异机存储，保留14份每日和8份每周副本，每月至少完成一次隔离环境真实恢复演练。初始RPO目标24小时、RTO目标4小时，实测不满足时阻断Traffic Gate。
 
-### 4.7 新服务器与容量隔离
+### 4.7 `hangzhou-traffic` 原生部署与容量边界
 
-- API/Worker、PostgreSQL、LeaseStore/EventBus和TURN按角色部署；生产TURN数据面不得与PostgreSQL或唯一API控制面共享网络瓶颈；
-- 敏感易失Redis与普通缓存/队列分实例，TURN至少两个故障域；任何单节点开发拓扑不得被当作生产证据；
-- 新环境必须设置CPU、内存、连接数、数据库连接池、Redis延迟、WebSocket数、TURN带宽和出口费用预算及告警；
-- 切流前分别执行HTTP、WS、多节点Signaling和TURN负载测试，再执行混合负载，证明Relay流量不会挤压认证、撤销、Lease续租和健康检查；
-- 容量不足时优先停止新Grant/Allocation并保持撤销和既有控制面可用，不允许因压力降级为绕过授权的本地状态；
-- 旧服务器监控数据只能用于估算初始容量，不构成新环境验收；最终规格由压测和目标并发决定。
+- 初始生产拓扑在 `hangzhou-traffic` 单机原生运行Nginx、一个v2 API/Worker进程、PostgreSQL和一个v2专用Redis进程；不使用容器，不继承v1数据；
+- 为节省内存，默认由同一`nli-api-v2`进程运行HTTP/WS和有界后台Worker；Migration使用短期命令，不常驻第二个Worker进程；
+- v2 Redis整实例都视为可丢失易失存储，关闭RDB/AOF，禁止Swap、通用备份和跨环境复制。不得与需要持久化的其他Redis用途共用实例；
+- PostgreSQL使用全新v2 Database和独立owner/migration/application角色，可与服务同机并在资源受限时共用现有PostgreSQL server process，但不得使用v1 Database、Schema、owner或application role；
+- systemd必须设置Restart、启动/停止超时、文件描述符上限、最小权限和资源限制；Worker使用有界批次，不能因清理/Outbox任务饿死认证、撤销、Lease续租或健康检查；
+- 新环境必须监测CPU、RSS、连接数、PostgreSQL连接池/锁等待、Redis延迟、WS数量、网络吞吐和磁盘，并为认证/撤销/Lease保留容量；
+- 当前单机没有TURN双故障域且网络压力已高，生产`NLI_RELAY_ENABLED`固定为false；只允许STUN/direct分支及RELAY明确不可用响应。未来至少两个TURN故障域通过Phase 8后才能重开生产Relay决策；
+- 切流前执行HTTP、WS和Signaling混合负载；容量不足时拒绝新低优先级工作，不允许绕过授权或退化为节点本地权威。
+
+### 4.8 WSL构建、手动上传与systemd发布
+
+- WSL是受控Release Builder；提交`rust-toolchain.toml`并使用`Cargo.lock`和`cargo build --locked --release`。构建前执行格式、Clippy、单元、契约和本地原生依赖集成测试；
+- 首次部署前记录远端`uname -m`、发行版和glibc版本。构建target必须匹配；优先使用经依赖验证的静态musl目标，否则WSL的glibc不得新于远端；
+- WSL Gate必须在WSL原生Linux文件系统中的checkout运行，不从`/mnt/c`、`/mnt/d`等DrvFS路径构建；提交`.gitattributes`确保`*.sh`与systemd模板使用LF；
+- Release产物包含二进制和`release-manifest.json`；Manifest记录Git commit、版本、Rust target/toolchain、`Cargo.lock` SHA-256、OpenAPI基线摘要、Redocly版本、测试执行数、时间戳和二进制SHA-256。先上传到`/opt/netherlink-v2/releases/<commit>/`临时文件并逐项远端校验；
+- `current`切换使用同一文件系统内`ln -s <new-release> current.next && mv -T current.next current`，禁止使用非原子的`ln -sfn`；
+- 配置位于`/etc/netherlink-v2/nli.env`，root拥有、服务组只读、权限`0640`；Secret不得出现在命令行、unit文件、release目录或日志；
+- Migration由部署者使用独立migration凭据手动执行并核对journal；API systemd服务使用无DDL权限的application凭据；
+- `nli-api-v2.service`使用专用非登录用户，至少启用`NoNewPrivileges`、`PrivateTmp`、`ProtectSystem=strict`、`ProtectHome=true`、空`CapabilityBoundingSet`、`UMask=0077`、`Restart=on-failure`、`LimitCORE=0`和受控`LimitNOFILE`；v2不写PrivateTmp之外的本地业务状态，不使用磁盘spool；日志只写journald；
+- unit使用`Wants/After=network-online.target`，并在Phase 0按实机unit名称加入PostgreSQL和`nli-v2` Redis的`After=`；具体指令需在目标发行版执行`systemd-analyze verify`和`systemd-analyze security`验证兼容性；
+- 发布顺序固定为：本地Gate→构建Manifest/SHA-256→上传临时路径→远端校验Manifest→创建并验证可读的异机v2数据库恢复点→Migration→原子切换软链接→`systemctl restart`→readiness/metrics/日志检查；任何contract阶段Migration必须先在隔离环境实际恢复该恢复点，失败则不得切换；
+- 发布失败时只可切回兼容当前Schema的前一v2 release并重启；Migration不做down，必要时从本次恢复点恢复v2数据库后再forward-fix；
+- `deploy/systemd/`和`scripts/release-wsl.sh`只保存无Secret模板/步骤。部署脚本在切换前必须校验`release-manifest.json`存在且内容匹配；不得把手动操作理解为可以跳过清单、校验和或验收记录。
 
 ## 5. 目标代码结构
 
@@ -146,7 +169,6 @@ src/
     state.rs
   bin/
     nli-migrate.rs
-    nli-worker.rs
 migrations/v2/
 tests/v2/
 scripts/
@@ -156,21 +178,23 @@ scripts/
 
 ## 6. 分阶段交付计划
 
-### Phase 0：基线、CI 与契约门禁
+### Phase 0：基线、WSL发布门禁与可选CI
 
 **目标**：先建立“什么算实现完成”的机械证明，不改变生产行为。
 
 **任务**：
 
-1. 从 `3b4f329` 创建实现分支/独立 worktree并记录 `git rev-parse`；
-2. 单独处理当前工作区 `Cargo.toml`/`Cargo.lock` 的 `0.1.0→0.2.0` 修改，不混入功能提交；
-3. 增加 CI：固定 Rust 1.94，启动临时 PostgreSQL 与两个独立 Redis 实例（普通缓存、敏感易失）；
+1. 将实现准备提交和`v2-design-gate-f`推送到`origin`；从包含全部准备决策的最新`master`创建`v2/phase-0-contract`分支/独立worktree并记录`git rev-parse`，契约漂移仍比较`3b4f329`；
+2. 以独立提交确认`Cargo.toml`/`Cargo.lock`中的应用版本`0.2.0`，不与功能提交混合；
+3. 提交`rust-toolchain.toml`并增加WSL Gate脚本；使用WSL原生PostgreSQL和v2专用无持久Redis运行依赖测试，不使用容器；可选CI先执行不依赖服务的格式、Clippy、单元和契约检查；
 4. 增加 OpenAPI lint、全部本地 `$ref`、81/94、operationId 唯一和 JSON Schema 正反例检查；
 5. 以 `3b4f329:doc/v2/openapi.yaml` 或其固定 SHA-256 做 drift 基线；普通 PR 不允许更新基线；
 6. 建立两类清单：
    - `frozen_inventory` 始终为94项；
    - `mounted_route_manifest` 只包含当前真实装配路由，并按阶段允许子集校验；
-7. 建立依赖集成测试脚本，禁止以全部 `#[ignore]` 的旧测试作为发布证据。
+7. 建立依赖集成测试脚本，禁止以全部 `#[ignore]` 的旧测试作为发布证据；
+8. 实机清点`hangzhou-traffic`的架构、发行版/glibc、systemd与依赖unit名称、v1是否同机、磁盘/内存/网络基线；不读取或提交现有Secret；
+9. 建立`release-manifest.json`生成/远端校验、Migration前异机备份和原子软链接切换脚本的无Secret骨架。
 
 **验收**：
 
@@ -178,12 +202,13 @@ scripts/
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
-npx --yes @redocly/cli lint doc/v2/openapi.yaml
+npm ci --ignore-scripts
+npx --no-install redocly lint doc/v2/openapi.yaml
 ```
 
-CI 另验证 PostgreSQL/Redis服务测试实际执行且非 ignored。
+Phase 0提交锁定Redocly版本的`package.json`/`package-lock.json`，禁止Gate联网浮动选择版本。WSL Gate必须验证PostgreSQL/Redis服务测试实际执行且非ignored，并输出执行数和Release Manifest。CI不是必备发布依赖；一旦配置，CI失败同样阻断合并，但不能替代WSL依赖验收。
 
-**完成定义**：CI 可重复运行；冻结 inventory 为94，mounted manifest 可为空但不能伪报已实现。
+**完成定义**：WSL Gate可重复运行；冻结inventory为94，mounted manifest可为空但不能伪报已实现。
 
 **回滚**：仅工具和测试，可独立 revert。
 
@@ -214,7 +239,7 @@ CI 另验证 PostgreSQL/Redis服务测试实际执行且非 ignored。
 - Idempotency 同Key同摘要、同Key异摘要、PROCESSING接管和Secret tombstone测试；
 - Outbox insert失败回滚领域fixture；Dispatcher失败不回滚已提交fixture；
 - `REQUIRE_BEFORE_SUCCESS` 与 `REVOCATION_WINS` 故障注入测试；
-- Redis persistence配置启动检查与CAS/TTL/重启测试。
+- v2专用无持久Redis配置启动检查与CAS/TTL/重启测试。
 
 **完成定义**：v2进程仅有内部 health/readiness/metrics，不装配任何冻结业务 Operation。
 
@@ -331,7 +356,7 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 **协议任务**：Phase/epoch、Offer/Answer、最多2次Restart、Candidate Receipt、Delivery ACK、Result/Error、8帧在途、背压、关闭码、敏感易失缓存与恢复。
 
-**验收必须启动至少两个真实服务进程**：
+**验收必须启动至少两个真实服务进程**：多节点协议验收先在WSL/受控非生产环境运行同版本双实例；跨真实网络和故障域验收使用未来临时双机环境。`hangzhou-traffic`单机生产拓扑不替代这些Gate。
 
 - 两Role连接替换和旧节点延迟帧；
 - check-both与replace竞争；
@@ -403,7 +428,7 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 - 未使用TURN Allocation尽力Refresh(0)；
 - 浏览器JavaScript WebSocket路径必须明确拒绝或标记不支持。
 
-**完成定义**：跨真实网络、双节点服务和真实Adapter重复通过；结果可在CI nightly或受控验收环境复现。
+**完成定义**：跨真实网络、双节点服务和真实Adapter在临时双机非生产环境重复通过；结果必须在未来独立TURN环境复现，`hangzhou-traffic`当前不承载生产Relay。
 
 ### Phase 10：新服务器Canary、全量切流与v1移除
 
@@ -439,12 +464,12 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 每个依赖测试使用独立Database或Schema、唯一Redis Prefix；并发/多节点测试不得只用单进程Mock。
 
-## 8. CI 与契约漂移门禁
+## 8. WSL Release Gate、可选CI与契约漂移门禁
 
-每个PR至少执行：
+每个PR由可选CI执行无外部依赖的静态检查；每个合并/Release Candidate必须附带一次本地WSL Gate记录，至少包括：
 
 1. `cargo fmt --check`、Clippy `-D warnings`、unit/integration compile；
-2. 实际启动PostgreSQL、普通Redis、敏感易失Redis并运行非ignored集成测试；
+2. WSL实际启动原生PostgreSQL和v2专用无持久Redis并运行非ignored集成测试；
 3. OpenAPI 3.1、全部local ref、固定81/94、唯一lowerCamelCase operationId；
 4. 当前mounted route与阶段允许Operation集合双向差集；
 5. 对`3b4f329:doc/v2/openapi.yaml`执行breaking drift检查；
@@ -452,14 +477,14 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 7. Migration空库/checksum/最小权限检查；
 8. Secret/SDP/ICE/IP禁区静态与运行产物扫描。
 
-冻结文档变化应直接使CI失败，并要求显式Gate重开记录，而不是自动接受新基线。
+冻结文档变化应直接使WSL Gate和可选CI失败，并要求显式Gate重开记录，而不是自动接受新基线。手工上传不允许绕过Release Gate记录。
 
 ## 9. 分支与提交策略
 
-- 设计基线保持在`3b4f329`和tag `v2-design-gate-f`；
-- 实现使用短分支：`v2/phase-0-contract`、`v2/phase-1-platform`等；
+- 契约漂移比较基线保持在`3b4f329`和tag `v2-design-gate-f`，并将基线提交及annotated tag推送到`origin`；
+- 实现分支从包含全部实现准备决策的最新`master`创建，不从`3b4f329`直接创建；第一条分支为`v2/phase-0-contract`，后续使用`v2/phase-1-platform`等短分支；
 - 每个提交只含一种职责：Migration、Domain/port、Adapter、HTTP/WS、Worker、测试、部署或开关；
-- 版本号变化独立提交；当前未提交的0.2.0修改不得被自动吸收；
+- v2应用版本固定为`0.2.0`，Cargo版本号以独立的实现准备提交纳入，不与功能修改混合；
 - 每阶段先合并不可见基础，再合并默认关闭的路由，最后单独提交开关；
 - Schema的expand/backfill/switch/contract分开；
 - v1删除最后单独提交；
@@ -469,12 +494,12 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 首批实现只覆盖Phase 0和Phase 1，不开放任何业务路由：
 
-1. 独立worktree/分支和CI服务；
+1. 从最新实现准备提交建立独立worktree/分支、WSL Gate脚本和可选静态CI；
 2. 固定OpenAPI inventory、阶段mounted manifest和drift门禁；
 3. v2目录、Problem/Principal/Operation Policy骨架；
 4. 独立v2 Database marker与`nli-migrate`；
 5. Idempotency/Audit/Outbox/Secret ports及故障方向测试；
-6. 独立敏感Redis部署检查和基础CAS；
+6. v2专用无持久Redis部署检查和基础CAS；
 7. 所有功能开关默认false。
 
 该切片结束后再批准Phase 2注册→验证→登录→Refresh纵切。
@@ -484,15 +509,16 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 | ID | 风险/阻塞 | 解除条件 |
 |---|---|---|
 | I-DB-01 | 误用旧Database或SQLx journal | 独立v2 DB、marker、专用migrator和错误库拒绝测试通过 |
-| I-CI-01 | 当前没有CI，旧集成测试全部ignored | CI实际运行隔离PG/Redis测试并报告执行数 |
+| I-BUILD-01 | WSL手工构建可能遗漏测试或产物不可在远端运行 | 锁toolchain/lockfile、原生依赖Gate、target/glibc预检、SHA-256和Release metadata通过 |
 | I-CONTRACT-01 | 94项范围被“路由占位”伪装完成 | frozen inventory与mounted manifest分离并按阶段零差集 |
 | I-AUDIT-01 | 撤销因Audit失败而回滚 | 两类Audit policy和故障注入通过 |
 | I-ROUTE-01 | 跨PG/Redis/节点竞态 | 两真实进程、原子check-both、250ms许可和写前fence测试通过 |
 | B-09-TURN | 自定义Adapter与真实兼容性未知 | Phase 8全部真实验收；之前生产Relay保持false |
 | I-CLIENT-01 | 客户端仓库/技术栈未确定 | 指定原生/Mod交付仓库并实现12步/28场景Harness |
 | I-CUTOVER-01 | v1无数据继承且v2首笔生产写入后不可回到v1 | 空数据重启公告、旧服只读边界、v2备份恢复和forward-recovery演练通过 |
-| I-CAPACITY-01 | 新服务器在WS/TURN混合压力下挤压认证、撤销或Lease | 分角色拓扑、容量预算、混合负载和故障域验收通过 |
-| I-SUPPLY-01 | Rust 1.94与新增依赖供应链 | CI锁定toolchain，依赖审计和许可证检查通过 |
+| I-CAPACITY-01 | `hangzhou-traffic`单机资源/网络压力挤压认证、撤销或Lease | systemd资源边界、Worker有界批次、容量预算和HTTP/WS/Signaling混合负载通过；Relay保持关闭 |
+| I-AVAIL-01 | `hangzhou-traffic`单机宕机导致v2整体不可用 | 接受单机SPOF；异机备份、24h RPO/4h RTO和异机重建Runbook经恢复演练通过 |
+| I-SUPPLY-01 | Rust 1.94与新增依赖供应链 | WSL/可选CI锁定toolchain和Redocly，依赖审计和许可证检查通过 |
 
 ## 12. 当前证据与未完成事项
 
