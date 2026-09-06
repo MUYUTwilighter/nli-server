@@ -34,12 +34,12 @@
 
 ## 当前状态
 
-- 总体状态：`DETAIL_DESIGN_COMPLETE / GATE_F_FROZEN / IMPLEMENTATION_PAUSED`
-- 当前阶段：Phase 9 — P2P 信令、NAT 与 TURN（设计完成，Gate F 已冻结）
-- 当前正式基线：`doc/v2/outline.md`、`doc/v2/common.md`、`doc/v2/nli_account.md`、`doc/v2/provider.md`、`doc/v2/friendship.md`、`doc/v2/game_instance.md`、`doc/v2/notifications.md`、`doc/v2/signaling.md`、`doc/v2/rest_api.md`、`doc/v2/data_model.md`、`doc/v2/openapi.yaml`
-- 当前工作文档：无；设计基线已冻结
-- 下一个可执行步骤：仅在用户明确授权后建立新的实现计划；建议顺序为 PostgreSQL Migration/清理任务 → Rust REST/WS API 与 DTO → LeaseStore/EventBus 路由和 Fencing → 默认关闭的 TURN Adapter → 客户端参考实现与真实网络验收
-- 用户执行边界：Phase 9 规划（#100–#108、Gate F）已完成；当前暂停，不自动进入数据库迁移、Rust API、TURN Adapter 或客户端实现
+- 总体状态：`DETAIL_DESIGN_COMPLETE / GATE_F_FROZEN / IMPLEMENTATION_PLANNED_NOT_STARTED`
+- 当前阶段：实现准备 — 基线已冻结、实现计划已完成，尚未开始编码
+- 当前契约基线：Git commit `3b4f329` / annotated tag `v2-design-gate-f`；包含 `doc/v2/outline.md`、`common.md`、`nli_account.md`、`provider.md`、`friendship.md`、`game_instance.md`、`notifications.md`、`signaling.md`、`rest_api.md`、`data_model.md`、`openapi.yaml`
+- 当前工作文档：`doc/v2/implementation_plan.md`（非契约文档）
+- 下一个可执行步骤：仅在用户明确授权后执行 `implementation_plan.md` 的 Phase 0–1 首批切片；先建 CI/契约门禁和独立 v2 Database/Migrator，不开放业务路由
+- 用户执行边界：实现计划已制定但实现未开始；不得自动创建 Migration、修改 Rust API、实现 TURN Adapter 或客户端
 
 ## 总体依赖关系
 
@@ -79,6 +79,9 @@ rest_api.md      data_model.md
             v
  rest_api.md + data_model.md + openapi.yaml
                   (Gate F extension)
+            |
+            v
+ implementation_plan.md (non-contract)
 ```
 
 说明：
@@ -900,6 +903,8 @@ rest_api.md      data_model.md
 | D-326 | — | Phase 9 | Gate F机械验收：YAML/全部本地引用/81 Paths/94唯一lowerCamel operationId/新示例/ICE与Envelope正反例通过；Redocly有效且仅8个已解释Warning | `openapi.yaml` | Gate F validation |
 | D-327 | — | Phase 9 | Phase 9 与全套详细设计在 Gate F 后暂停；恢复时按 Migration/清理 → Rust REST/WS → LeaseStore/EventBus → 默认关闭的 TURN Adapter → 客户端及真实网络验收推进，契约变更须显式重开 Gate | `_design_progress.md`; `outline.md` | Implementation entry / pause |
 | D-328 | — | Gate F final review | 不改变81/94表面的前提下收窄5个Signaling Operation错误状态；明确不可关联坏帧直接关闭、TURN同five-tuple单live Slot、Quota Bucket模式/window/GC及Permit→Slot→Grant→Receipt→Session清理顺序 | `signaling.md`; `rest_api.md`; `data_model.md`; `openapi.yaml` | Final consistency hardening |
+| D-329 | — | Implementation preparation | Gate F契约以commit `3b4f329`和annotated tag `v2-design-gate-f`独立冻结；提交只含12个`doc/v2`设计文件，既有Cargo 0.2.0工作区修改未混入 | Git history | Baseline provenance |
+| D-330 | — | Implementation preparation | v2使用全新独立PostgreSQL Database与`migrations/v2` journal，不迁移v1数据；按CI/平台→30 Identity→30 Provider/Friend→29 Runtime/Join→Gate E→5 Signaling→隐藏Relay→客户端验收→切流/删除v1推进 | `implementation_plan.md` | Implementation sequence |
 
 
 ## 进度记录
@@ -908,6 +913,7 @@ rest_api.md      data_model.md
 
 | 日期 | 阶段 | 完成内容 | 遗留问题 | 下一步 |
 | --- | --- | --- | --- | --- |
+| — | 实现准备 | 创建仅含12个v2设计文件的基线提交`3b4f329`和tag `v2-design-gate-f`；完成`implementation_plan.md`，吸收Reviewer对migration journal、Outbox/Audit故障方向、Route线性化、Relay清理、客户端验收和切流策略的全部阻塞修正 | 当前Cargo 0.2.0修改仍未提交且不属于设计基线；客户端仓库、自定义TURN Adapter和真实基础设施仍是后续实现输入 | 保持IMPLEMENTATION_PLANNED_NOT_STARTED；待明确授权后只执行Phase 0–1 |
 | — | Gate F 最终审阅 | 三路只读审阅因上下文上限未形成正式输出；主审从持久轨迹提取并逐项核实，修正Quota窗口歧义、five-tuple双Slot、Relay清理/FK顺序、无message_id错误关联及OpenAPI额外403/413/422；YAML/1422本地引用/81 Paths/94 Operations/状态码集合/AJV正反例/Markdown链接/diff检查通过，Redocly有效且仍为8个已解释Warning | 独立Reviewer运行稳定性不足；真实TURN/WebRTC与数据库约束仍属于实现验收，不在本轮执行 | 最终审阅无设计 blocker；保持IMPLEMENTATION_PAUSED |
 | — | Phase 9 / Gate F | #108完成：总体状态、D-324–D-327、正式基线、Phase 9完成标准和后续实现入口已同步；全套详细设计与Gate F冻结 | Redocly保留8个预期Warning；真实TURN/WebRTC、多节点、撤销、配额、崩溃和隐私验证属于实现Gate | 按用户要求暂停；仅在明确授权后建立新的实现计划 |
 | — | Phase 9 | #106 Reviewer 恢复后发现 ACK reply_to 无合法位置及 Restart epoch 通则冲突；修正后 Oracle 条件批准，再补 4405 退避、8 帧在途定义、ACK 超时先 GET、TURN Refresh(0)；12 步算法/错误表/28 场景冻结 | 真实客户端/WebRTC/TURN 故障测试仍属实现 Gate；#107 未开始 | 同步 REST/Data/OpenAPI 并执行 Gate F |
