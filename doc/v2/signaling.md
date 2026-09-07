@@ -1,6 +1,6 @@
 # NetherLink v2 P2P 信令、NAT 与 TURN
 
-> 状态：`PHASE_9_COMPLETE / GATE_F_FROZEN`
+> 状态：`PHASE_9_COMPLETE / GATE_F_FROZEN + D-329_ROUTING_AMENDMENT`
 >
 > 依赖：Gate D、Gate E（均已通过）
 >
@@ -40,7 +40,7 @@
 - PostgreSQL/HTTP 状态继续是业务权威；
 - Phase 5 的 `/instances/{instance_id}/ws` 只负责实例保活和通知，不承载 SDP、Answer 或 ICE Candidate；
 - 关键授权和信令会话创建使用明确的 HTTP 状态转换；
-- Phase 9 的 `/v2/signaling-sessions/{signaling_session_id}/ws` 是 `common.md`“WebSocket 不承担关键业务状态写入”规则的唯一书面例外，只允许承载本文冻结的短期信令消息、限流和生命周期；Phase 5 通知/保活 WS 的边界保持不变；
+- Phase 9 的客户端公共 `/v2/signaling-sessions/{signaling_session_id}/ws`（应用内 `/signaling-sessions/{signaling_session_id}/ws`）是 `common.md`“WebSocket 不承担关键业务状态写入”规则的唯一书面例外，只允许承载本文冻结的短期信令消息、限流和生命周期；Phase 5 通知/保活 WS 的边界保持不变；
 - 通知仍允许丢失、重复和乱序；客户端恢复不能依赖通知重放。
 
 ## 范围
@@ -87,7 +87,7 @@ SDP、ICE Candidate、网络地址和 TURN Secret 仍只允许进入内存或后
 
 ### 公开入口
 
-批次 1 冻结以下独立入口；它们是 Gate E 之后的新增扩展，不改变既有 89 个 HTTP Operation：
+批次 1 冻结以下独立入口；它们是 Gate E 之后的新增扩展，不改变既有 89 个 HTTP Operation。表中是客户端公共 URL；反向代理剥离 `/v2` 后，应用内统一挂载对应的无版本前缀路由：
 
 | Method / Path | Principal | 语义 |
 |---|---|---|

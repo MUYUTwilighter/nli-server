@@ -2,17 +2,24 @@ openapi: 3.1.1
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: NetherLink v2 API
-  version: 2.1.0
+  version: 2.1.1
   description: |
     Machine-readable contract derived from doc/v2/rest_api.md.
     PostgreSQL/Redis internals from data_model.md are intentionally not exposed.
     HTTP and database state are authoritative. Phase 5 notification WebSocket events are hints;
     the Phase 9 signaling WebSocket is the single explicitly bounded real-time protocol exception.
   x-contract-status: GATE_F_FROZEN
+  x-contract-amendment: D-329_REVERSE_PROXY_VERSION_BOUNDARY
   x-gate-e-baseline: 77 paths / 89 operations frozen without semantic changes
+  x-routing-boundary:
+    publicBasePath: /v2
+    applicationBasePath: /
+    versionOwner: REVERSE_PROXY
+    proxyStripsPublicBasePath: true
+    applicationMountsVersionPrefix: false
 servers:
   - url: /v2
-    description: Relative v2 API root
+    description: Public v2 API root. The trusted reverse proxy strips this prefix; the application mounts the unversioned paths below.
 tags:
   - name: Auth
     description: NLI account registration, authentication, recovery, and recent-authentication flows.
@@ -629,7 +636,7 @@ paths:
           description: Redirect to the fixed frontend completion page; never includes an NLI Token.
           headers:
             X-Request-ID: {$ref: '#/components/headers/RequestId'}
-            Location: {$ref: '#/components/headers/Location'}
+            Location: {$ref: '#/components/headers/AuthProviderRedirectLocation'}
             Set-Cookie: {$ref: '#/components/headers/AuthProviderFlowSetCookie'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -1173,7 +1180,7 @@ paths:
           description: Redirect to fixed frontend completion page without Provider or NLI Tokens.
           headers:
             X-Request-ID: {$ref: '#/components/headers/RequestId'}
-            Location: {$ref: '#/components/headers/Location'}
+            Location: {$ref: '#/components/headers/BindingProviderRedirectLocation'}
             Set-Cookie: {$ref: '#/components/headers/BindingProviderFlowSetCookie'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -2419,12 +2426,12 @@ components:
       type: apiKey
       in: cookie
       name: __Secure-nli-auth-provider-flow
-      description: Secure, HttpOnly, SameSite=Lax; Path=/v2/auth/provider; maximum age 10 minutes.
+      description: Secure, HttpOnly, SameSite=Lax; client-visible Path=/v2/auth/provider; maximum age 10 minutes. The proxy strips /v2 before forwarding.
     BindingProviderFlowCookie:
       type: apiKey
       in: cookie
       name: __Secure-nli-binding-provider-flow
-      description: Secure, HttpOnly, SameSite=Lax; Path=/v2/provider-bindings; maximum age 10 minutes.
+      description: Secure, HttpOnly, SameSite=Lax; client-visible Path=/v2/provider-bindings; maximum age 10 minutes. The proxy strips /v2 before forwarding.
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -2432,7 +2439,8 @@ components:
       required: true
       description: |
         Opaque client-generated key; 1-128 printable ASCII characters without whitespace.
-        Scope is Principal + Method + normalized route + key. Same key and normalized
+        Scope is Principal + Method + normalized application route + key; the route is
+        this unversioned OpenAPI path after the proxy strips /v2. Same key and normalized
         body replays the same result; a different body returns IDEMPOTENCY_KEY_REUSED,
         an in-flight winner returns REQUEST_IN_PROGRESS, and expired one-time Secret
         replay material returns IDEMPOTENCY_RESULT_EXPIRED without generating a new Secret.
@@ -2447,8 +2455,8 @@ components:
       in: query
       required: false
       description: |
-        Opaque authenticated server-issued cursor bound to principal, route, filters,
-        and sort. Invalid, expired, or cross-principal cursors return 400. The friends
+        Opaque authenticated server-issued cursor bound to principal, the unversioned
+        normalized application route, filters, and sort. Invalid, expired, or cross-principal cursors return 400. The friends
         endpoint additionally binds a 10-minute server-side ordering snapshot.
       schema:
         type: string
@@ -2595,10 +2603,23 @@ components:
         type: integer
         minimum: 1
     Location:
-      description: Stable relative URL of the created resource.
+      description: Stable client-visible relative URL including the trusted public /v2 base path; never an application-internal unversioned route or a value derived from untrusted forwarding headers.
       schema:
         type: string
         format: uri-reference
+        pattern: '^/v2(?:/|$)'
+    AuthProviderRedirectLocation:
+      description: Fixed trusted frontend completion path; this browser redirect is not an API resource URL and is not derived from forwarding headers.
+      schema:
+        type: string
+        format: uri-reference
+        const: /provider-auth/complete
+    BindingProviderRedirectLocation:
+      description: Fixed trusted frontend completion path; this browser redirect is not an API resource URL and is not derived from forwarding headers.
+      schema:
+        type: string
+        format: uri-reference
+        const: /provider-binding/complete
     WebSocketUpgrade:
       description: WebSocket protocol upgrade acknowledgement.
       schema: {type: string, const: websocket}
@@ -2611,10 +2632,10 @@ components:
         type: string
         example: Bearer
     AuthProviderFlowSetCookie:
-      description: __Secure-nli-auth-provider-flow; Secure; HttpOnly; SameSite=Lax; Path=/v2/auth/provider; Max-Age<=600.
+      description: __Secure-nli-auth-provider-flow; Secure; HttpOnly; SameSite=Lax; client-visible Path=/v2/auth/provider; Max-Age<=600.
       schema: {type: string}
     BindingProviderFlowSetCookie:
-      description: __Secure-nli-binding-provider-flow; Secure; HttpOnly; SameSite=Lax; Path=/v2/provider-bindings; Max-Age<=600.
+      description: __Secure-nli-binding-provider-flow; Secure; HttpOnly; SameSite=Lax; client-visible Path=/v2/provider-bindings; Max-Age<=600.
       schema: {type: string}
   schemas:
     UuidV4:
@@ -2855,9 +2876,11 @@ components:
         verification_uri:
           type: string
           format: uri
+          description: Trusted configured frontend URL; it is not an API route, need not use /v2, and is never derived from request forwarding headers.
         verification_uri_complete:
           type: string
           format: uri
+          description: Trusted configured frontend URL with the user code; it is not an API route, need not use /v2, and is never derived from request forwarding headers.
         expires_in:
           type: integer
           const: 600

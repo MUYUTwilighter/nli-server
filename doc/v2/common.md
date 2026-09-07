@@ -1,6 +1,6 @@
 # NetherLink v2 公共约定
 
-> 状态：`PHASE_0_COMPLETE`
+> 状态：`PHASE_0_COMPLETE / D-329_ROUTING_AMENDMENT`
 >
 > 本文档记录所有 v2 HTTP 模块共享的公共约定。模块级细节由后续子设计补充，但不得在本文件之外自行定义冲突规则。
 
@@ -34,13 +34,19 @@
 
 状态：`CONFIRMED`
 
-v2 HTTP API 使用 URL 路径版本：
+客户端可见的 v2 HTTP API 使用公共 URL 路径版本：
 
 ```text
 /v2/*
 ```
 
-公共健康检查、指标等运维端点是否进入 `/v2`，在 REST API 阶段单独确定。
+版本前缀只属于受控反向代理。代理按精确首段把 `/v1/{path...}` 与 `/v2/{path...}` 路由到各自后端，并在转发前剥离版本首段；v2 应用进程统一只挂载无版本前缀的 `/{path...}`，例如公共 `/v2/auth/login` 在应用内为 `/auth/login`。应用不得再挂载或接受 `/v1/*`、`/v2/*`，避免双前缀和绕过代理版本选择。
+
+`openapi.yaml` 描述客户端公共面，因此保留 `servers: /v2`，而 `paths` 本身保持无版本前缀；应用 Router、Operation Policy Manifest 和 mounted route manifest 直接使用这些无前缀 `paths`。单元/进程内路由测试调用 `/{path...}`，代理端到端测试调用 `/v2/{path...}`，两层都必须覆盖 HTTP 与 WebSocket Upgrade。
+
+代理只能剥离一个精确版本首段并保留剩余路径、Query、Method、`Authorization` 和必要 WebSocket Upgrade Header；畸形、重复前缀及无法安全规范化的路径应在边界拒绝。应用生成 API Resource `Location`、Provider Callback URI、Cookie Path、Signaling `channel` 等客户端可见 API 值时，必须使用受信部署配置的公共 Base Path `/v2`，不得信任客户端提供的 Host、`Forwarded`、`X-Forwarded-Prefix` 或类似 Header 拼接 URL。Provider Callback 的 `303 Location` 与 Device Code `verification_uri*` 是独立的受信固定前端 URL，不是 API Resource URL，也不得从转发 Header 推导。
+
+公共健康检查、指标等运维端点是否经版本前缀暴露由部署/代理单独决定；应用内运维路由仍不得据此给业务 Router 增加版本前缀。
 
 ## ID 与安全凭据
 
@@ -165,7 +171,7 @@ HTTP JSON 字段统一使用 `snake_case`：
 规则：
 
 - `204 No Content` 不返回 JSON Body；
-- 资源创建统一返回 `201 Created`，并在存在稳定资源 URL 时返回 `Location`；
+- 资源创建统一返回 `201 Created`，并在存在稳定资源 URL 时返回 `Location`；该值面向客户端，必须包含受信配置的公共 `/v2` Base Path，而不是应用内无前缀路由；
 - 操作型端点需要返回资源还是结果对象，由对应模块文档确定。
 
 ## 错误响应
@@ -293,7 +299,7 @@ Idempotency-Key: <opaque-client-generated-key>
 
 公共规则：
 
-- Key 在“认证 Principal + HTTP Method + 规范化路由 + Key”范围内唯一；
+- Key 在“认证 Principal + HTTP Method + 规范化应用路由 + Key”范围内唯一；规范化路由使用代理剥离版本首段后的 OpenAPI path，不把公共 `/v2` 计入作用域；
 - Key 是客户端生成的不透明值，最大长度为 128 个 ASCII 字符，不能包含空白或控制字符；
 - 服务端必须保存规范化请求摘要；
 - 同一个 Key 和同一个请求重复提交时，返回第一次已完成操作的相同业务结果；
@@ -363,7 +369,7 @@ Provider 聚合好友等复杂集合如何编码来源级游标，在对应模�
 - `502 Bad Gateway`：Provider 等上游返回无效响应；
 - `503 Service Unavailable`：所需依赖或上游暂时不可用。
 
-资源创建成功统一返回 `201 Created`，并在能够形成稳定资源 URL 时返回 `Location` Header。命令型 POST 根据结果返回 `200` 或 `204`。
+资源创建成功统一返回 `201 Created`，并在能够形成稳定资源 URL 时返回包含受信公共 Base Path `/v2` 的 `Location` Header；不得返回仅在应用进程内有效的无前缀路由。命令型 POST 根据结果返回 `200` 或 `204`。
 
 DELETE 采用天然幂等语义：如果服务端仍能安全确认调用者对该资源范围具有权限，则资源已经不存在时也返回 `204 No Content`；如果无法在不泄漏资源存在性的前提下确认权限，可以返回 `404 Not Found`。
 
@@ -497,7 +503,7 @@ Retry-After: 5
 
 ## 公共场景走查
 
-以下路径只用于验证公共约定，具体资源命名仍由 `rest_api.md` 冻结。
+以下请求行使用客户端公共 `/v2` URL，只用于验证公共约定；代理剥离首段后的应用路由不含 `/v2`，具体资源命名仍由 `rest_api.md` 冻结。
 
 ### 账号查询
 

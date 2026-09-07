@@ -1,6 +1,6 @@
 # NetherLink v2 REST API 契约
 
-> 状态：`PHASE_6_FROZEN + GATE_F_FROZEN_EXTENSION`
+> 状态：`PHASE_6_FROZEN + GATE_F_FROZEN_EXTENSION + D-329_ROUTING_AMENDMENT`
 >
 > 基线：`common.md`、`nli_account.md`、`provider.md`、`friendship.md`、`game_instance.md`、`notifications.md`；Phase 9 扩展依赖 `signaling.md`。
 >
@@ -29,7 +29,7 @@
 
 所有端点继承 `common.md`：
 
-- Base Path `/v2`；
+- 客户端公共 Base Path 为 `/v2`；反向代理选择 v2 后端并剥离该首段，应用 Router、Operation Policy 和 mounted route manifest 统一使用无版本前缀的 `/{path...}`；
 - JSON 字段 `snake_case`，枚举 `UPPER_SNAKE_CASE`；
 - UUIDv4 公共资源 ID；
 - Unix 毫秒时间；
@@ -322,7 +322,7 @@ reauthentication_expires_at = reauthenticated_at + 5 minutes
 `POST /v2/auth/provider/{provider_id}/start` 请求 `purpose = LOGIN / REGISTER / LINK / REAUTH`：
 
 - LOGIN/REGISTER 可以 PUBLIC；LINK/REAUTH 必须携带当前 Access Token，LINK 还要求近期认证；
-- 事务固定 Provider、Purpose、Redirect URI、State、PKCE、当前 Family（REAUTH）和 10 分钟期限；
+- 事务固定 Provider、Purpose、Redirect URI、State、PKCE、当前 Family（REAUTH）和 10 分钟期限；Provider 注册的 Callback URI 使用客户端公共 `/v2/auth/provider/callback`，代理转发到应用内 `/auth/provider/callback`；
 - 返回受 Registry 允许列表约束的 `authorization_url` 和 `expires_at`；
 - 客户端不能提交任意回调 URL 或 Provider Scope。
 
@@ -330,7 +330,7 @@ Provider Callback 验证服务端 State 后：
 
 1. 不在 URL、Query、Fragment 或 HTML 中返回 NLI Token；
 2. 设置 `Secure + HttpOnly + SameSite=Lax`、Path 最小化、最多 10 分钟的浏览器事务 Cookie；
-3. 使用 `303 See Other` 跳转到固定前端完成页；
+3. 使用 `303 See Other` 跳转到受信配置的固定前端完成页；该 `Location` 不是 API Resource URL，不要求 `/v2`，且不得从 Host/Forwarded Header 推导；
 4. 前端以受信 Origin 调用 `POST /v2/auth/provider/complete`；
 5. Complete 原子消费或在 60 秒内安全重放结果。
 
@@ -349,7 +349,7 @@ Complete 结果：
 
 ### Device Authorization
 
-`POST /v2/auth/device/code` 使用 `application/x-www-form-urlencoded`，只接受 `client_name`。成功 `200` 返回 RFC 8628 字段 `device_code`、`user_code`、`verification_uri`、`verification_uri_complete`、`expires_in=600`、`interval=5`。
+`POST /v2/auth/device/code` 使用 `application/x-www-form-urlencoded`，只接受 `client_name`。成功 `200` 返回 RFC 8628 字段 `device_code`、`user_code`、`verification_uri`、`verification_uri_complete`、`expires_in=600`、`interval=5`。两个 Verification URI 都来自受信前端配置，不是 API Route、不要求 `/v2`，也不得从请求 Host/Forwarded Header 推导。
 
 `POST /v2/auth/device/authorization-lookups` 使用普通 JSON `{user_code}`。成功返回 Authorization ID、清洗后的 client_name、expires_at 和 PENDING。User Code 不放入 API Path；查询按 IP、Account 和 Code 限流。
 
@@ -490,7 +490,7 @@ AUTHORIZATION_STATE_CONFLICT
 - NO_NEW_BINDINGS 拒绝 CREATE/REPLACE，但允许既有 REAUTH；DISABLED 全部拒绝；
 - 返回 Registry 允许的 authorization_url 和 expires_at，客户端不能提交 URL/Scope。
 
-Callback 验证 State 后设置 `Secure + HttpOnly + SameSite=Lax` 的短期 Cookie，并 303 到固定前端。`POST /v2/provider-bindings/authorization-completions` 同时要求当前 Account Access Token 和 Cookie，原子完成：
+Provider 注册的 Binding Callback URI 使用客户端公共 `/v2/provider-bindings/authorization-callback`，代理转发到应用内 `/provider-bindings/authorization-callback`。Callback 验证 State 后设置 `Secure + HttpOnly + SameSite=Lax` 的短期 Cookie，并 303 到受信配置的固定前端；该 `Location` 不要求 `/v2` 且不得从 Host/Forwarded Header 推导。`POST /v2/provider-bindings/authorization-completions` 同时要求当前 Account Access Token 和 Cookie，原子完成：
 
 - CREATE：建立唯一 Binding；
 - REAUTH：Subject 相同则恢复 ACTIVE，否则 `409 PROVIDER_SUBJECT_MISMATCH` 且不修改；
@@ -656,7 +656,7 @@ Provider 上游分类仍由 ProviderService 转换为 409/422/429/502/503，不�
 
 ## 批次 3：Instance、ACL、Proxy 与 Invite（已完成）
 
-已确认：普通配置与 ACL 分别使用完整 PUT 并各自维护 Revision；创建时可选原子绑定 Proxy Secret；`/instances` 只列 Owner 自有资源；ACL 使用 Body Revision + Idempotency-Key；已有 Rule 回传 ID、新 Rule 由服务端生成；Proxy/Invite Secret 可加密重放 60 秒；NLI Invite 验证返回绑定当前 Instance Session 的 60 秒 Resolution；WebSocket Path 为 `/instances/{id}/ws`。
+已确认：普通配置与 ACL 分别使用完整 PUT 并各自维护 Revision；创建时可选原子绑定 Proxy Secret；`/instances` 只列 Owner 自有资源；ACL 使用 Body Revision + Idempotency-Key；已有 Rule 回传 ID、新 Rule 由服务端生成；Proxy/Invite Secret 可加密重放 60 秒；NLI Invite 验证返回绑定当前 Instance Session 的 60 秒 Resolution；应用内 WebSocket Path 为 `/instances/{id}/ws`，客户端公共 Path 为 `/v2/instances/{id}/ws`。
 
 ## Game Instance API
 
@@ -989,7 +989,7 @@ Problem Body 始终遵循 `common.md`。401 可带标准 `WWW-Authenticate: Bear
 
 ### Key Scope 和摘要
 
-继承 `Principal + Method + normalized route + key`。PUBLIC 请求额外绑定安全规范化后的操作类别与匿名流程上下文，不能让一个邮箱/Secret 的 Key 重放另一个目标。
+继承 `Principal + Method + normalized application route + key`；route 是反向代理剥离 `/v2` 后的 OpenAPI path，避免公共前缀或代理别名形成不同幂等作用域。PUBLIC 请求额外绑定安全规范化后的操作类别与匿名流程上下文，不能让一个邮箱/Secret 的 Key 重放另一个目标。
 
 请求摘要使用规范化 Schema 后的 keyed digest。Password、Token、Provider Code、Invite/Grant Secret 等敏感字段只能进入内存中的摘要计算，普通幂等表不保存原文或可离线验证的普通哈希。
 
@@ -1248,9 +1248,11 @@ Login、Refresh、Provider Login、Device Token、Guest Token、Grant/Invite Sec
 
 ## Phase 9 Gate F 扩展：Signaling
 
-> 状态：`GATE_F_FROZEN`。本节只追加 5 个 Operation；Phase 6 / Gate E 的 89 个 Operation、Join、Guest、ACL、Instance 与通知语义不变。`signaling.md` 是实时协议、Relay Authorizer 和客户端恢复的权威来源。
+> 状态：`GATE_F_FROZEN + D-329_ROUTING_AMENDMENT`。本节只追加 5 个 Operation；Phase 6 / Gate E 的 89 个 Operation、Join、Guest、ACL、Instance 与通知语义不变。`signaling.md` 是实时协议、Relay Authorizer 和客户端恢复的权威来源。
 
 ### 端点
+
+下表继续使用客户端公共 `/v2` URL；v2 应用内对应路由均剥离 `/v2` 首段，Signaling WS 亦不例外。
 
 | Method | Path | Principal | 语义 |
 | --- | --- | --- | --- |

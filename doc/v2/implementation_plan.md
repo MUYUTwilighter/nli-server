@@ -1,8 +1,8 @@
 # NetherLink v2 实现计划
 
-> 状态：`IMPLEMENTATION_PLAN_FROZEN / IMPLEMENTATION_NOT_STARTED`
+> 状态：`IMPLEMENTATION_PLAN_FROZEN / PHASE_0_IN_PROGRESS`
 >
-> 设计基线：Git commit `3b4f329`，本地 annotated tag `v2-design-gate-f`
+> 核心 Gate F 基线：Git commit `3b4f329`，annotated tag `v2-design-gate-f`；D-329 路由边界文档提交后须另建 annotated tag `v2-design-gate-f-routing`，并作为实现期完整 drift 基线
 >
 > 契约基线：OpenAPI 3.1.1，Gate E `77 Paths / 89 Operations`，Gate F 总计 `81 Paths / 94 Operations`
 >
@@ -10,7 +10,9 @@
 >
 > 初始生产目标：`hangzhou-traffic`，WSL 本地构建、手动上传、原生 systemd 运行，不使用容器
 >
-> 本文不是新 API 契约。若实现需要改变 `3b4f329:doc/v2/` 的冻结语义，必须显式重开对应 Gate，不能通过普通实现 PR 静默修改。
+> 本文不是新 API 契约。除 D-329 已批准的代理/应用路由边界外，若实现需要改变 `3b4f329:doc/v2/` 的冻结语义，必须显式重开对应 Gate，不能通过普通实现 PR 静默修改。
+>
+> Pi 项目入口：[`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md) 在项目受信任后追加默认系统提示词，并要求每回合按 [`index.md`](index.md) → [`implementation_progress.md`](implementation_progress.md) → 当前 Phase 账本恢复；不要默认加载整个 `doc/v2/`。
 
 ## 1. 目标
 
@@ -31,6 +33,9 @@
 
 ## 3. 权威输入与适用范围
 
+- `.pi/APPEND_SYSTEM.md`：Pi 项目级系统提示词追加，只提供强制入口与工作口径，不具有契约或进度权威；
+- `doc/v2/index.md`：只提供最小上下文导航，不具有契约权威；
+- `doc/v2/implementation_progress.md` 与 `doc/v2/progress/phase-N.md`：只记录当前进度、证据、阻塞和交接，不具有行为契约权威；
 - `doc/v2/openapi.yaml`：公共 HTTP/WS Upgrade 表面和 DTO；
 - `doc/v2/common.md`：公共格式、安全和错误约定；
 - 各领域文档：账号、Provider、好友、实例、通知和信令领域语义；
@@ -38,7 +43,25 @@
 - `data_model.md`：持久化、事务、锁序、保留和清理；
 - 本实现计划：实现顺序和交付方式，不覆盖上述契约。
 
-这些文档应已一致；若实现中发现交叉文档矛盾，必须停止该切片并重开设计Gate，不能自行按“优先级”选择其中一份。现有 `src/`、`migrations/`、`tests/` 和 `deploy/` 只作为 v1 反例或通用基础设施候选，不具有 v2 语义权威。
+这些文档应已一致；若实现中发现交叉文档矛盾，必须停止该切片并重开设计Gate，不能自行按“优先级”选择其中一份。D-330 后 active tree 不再保留 v1 代码、测试、Migration、部署样例、配置模板或 v1 文档；如需审计旧行为只能读取 Git 历史/冻结 tag，且其内容不具有 v2 语义权威。
+
+### 3.1 设计冻结迁移记录
+
+临时设计监督记录已经完成使命并移除；以下长期有效信息由本文承接：
+
+| ID | 决策 |
+| --- | --- |
+| D-324 | Gate F 只在 Gate E 的 77 Paths / 89 Operations 上追加 4 Paths / 5 Operations，总计 81/94；既有 89 项语义不变。 |
+| D-325 | Gate F 核心 OpenAPI 2.1.0 使用 JSON Schema 2020-12 约束 Signaling/ICE closed DTO、类型—Payload 分支和封闭错误；D-329 以 2.1.1 patch 增加代理/应用路由边界，不改变 81/94 表面。 |
+| D-326 | YAML、全部本地引用、唯一 lowerCamelCase operationId、示例及 ICE/Envelope 正反例属于 Gate F 机械验收。 |
+| D-327 | 实现顺序为基线门禁 → Migration/清理 → Rust REST/WS → LeaseStore/EventBus → 默认关闭的 TURN Adapter → 客户端与真实网络验收；下方 Phase 0–10 是详细权威顺序。 |
+| D-328 | 最终审阅收窄 Signaling HTTP 状态码，并冻结不可关联坏帧直接关闭、同 five-tuple 单 live Slot、Quota Bucket 模式及 `Permit→Slot→Grant→Receipt→Session` 清理顺序。 |
+| D-329 | 公共 `/v1`、`/v2` 版本首段由受控反向代理拥有并剥离；v2 应用 Router、Operation Policy 和 mounted manifest 统一使用 OpenAPI 的无版本 `/{path...}`，客户端 URL/Cookie/Location/channel 仍使用公共 `/v2`。 |
+| D-330 | Phase 0 建立 clean-slate active tree：提前删除全部 v1 代码、测试、旧 Migration、部署样例、配置模板和 `doc/v1/`；保留 Cargo package metadata/lock 供 v2 重建，已部署 v1 的只读观测与最终下线仍由 Phase 10 管理。 |
+
+最后一次设计校验结果：OpenAPI 3.1.1 / JSON Schema 2020-12，81 Paths、94 个唯一 lowerCamelCase Operation、1422 个本地 `$ref` 全部解析；Signaling Client/Server Envelope 与 ICE policy 的 AJV 正反例、Markdown 相对链接和 diff whitespace 检查通过。Redocly 校验有效，保留 8 个已解释 Warning：未冻结 License、两个规范 303 Callback、两个规范 101 WebSocket，以及三个只由 OpenAPI 扩展引用的 WebSocket Envelope Component。
+
+该证据只证明设计契约一致，不证明数据库、WebRTC、TURN、多节点、撤销、配额、崩溃或隐私实现通过。`B-09-TURN` 继续作为生产 Relay 门槛，`NLI_RELAY_ENABLED` 在真实验收和人工审批前必须保持 `false`。
 
 ## 4. 已冻结的实施决策
 
@@ -48,7 +71,7 @@
 
 - v2 使用独立 `DATABASE_URL`、数据库权限和 SQLx `_sqlx_migrations` journal；
 - v2 migrator 只嵌入 `migrations/v2/`，例如 `sqlx::migrate!("migrations/v2")`；
-- 现有三份 v1 migration 不进入 v2 journal，也不复制 v1 数据；
+- 已从 active tree 删除的三份 v1 migration 只存在于 Git 历史，不进入 v2 journal，也不复制 v1 数据；
 - 部署前置检查拒绝连接含 v1 业务表但没有 v2 marker 的数据库，防止误写旧库；
 - Migration 由独立 `nli-migrate` 命令执行，API 进程启动时不自动执行 DDL；
 - Migration 只前向推进。Expand、受控回填、read/write switch、contract cleanup 分开提交和发布；
@@ -57,14 +80,17 @@
 
 ### 4.2 v1 隔离
 
-- 新代码落在 `src/platform/` 与 `src/v2/`；v2 模块不得引用 v1 DTO、Repository、Redis 方法或 Signaling Connection Registry；
-- 可审计后重写或移植：Bearer 语法解析、随机令牌、Secret Debug 遮蔽、数据库/Redis健康检查、Request ID、Timeout、Trace、Metrics、优雅停机；
-- 禁止复用：`src/api/signaling.rs`、`src/model/signaling.rs`、`src/signaling.rs`、`src/api/turn.rs`、`src/db/friends.rs`、`src/redis.rs` 的 `nli:*` 数据模型，以及 v1 Minecraft Principal/Presence 权威语义；
-- v1 删除是切流观测期后的独立提交，不与 Relay 实现或生产切流绑定。
+- Phase 0 在任何 v2 代码落地前删除 active tree 中的 `src/`、`tests/`、旧 `migrations/`、`deploy/`、`config/terms`、`doc/v1/` 和 `.env.example`；该 clean-slate 删除使用独立可审计提交；
+- 保留的 `Cargo.toml` / `Cargo.lock` 只提供 package `0.2.0` 元数据和后续依赖重建起点；删除旧 `src/` 后暂时不可构建，P0-03 必须先建立最小 v2 target、移除无依据依赖并恢复 Gate，不得用空测试伪装通过；
+- 新代码只落在新建的 `src/platform/` 与 `src/v2/`；不得从 Git 历史复制 v1 DTO、Repository、Redis 数据模型、Minecraft Principal/Presence 或 Signaling Connection Registry；
+- 若实现通用能力需要参考旧代码，只能在独立审计中查看历史并按 v2 契约重写；历史代码不能直接恢复到 active tree；
+- 仓库资产提前删除不等于生产 v1 已下线。已部署 v1 使用现有不可变发布产物和仓库外运维配置维持只读观测，最终停止进程、移除公共路由和执行离线保留仍属于 Phase 10。
 
 ### 4.3 运行边界
 
 - `AppState` 只装配 application ports；Handler 不直接操作 SQLx/Redis；
+- v2 应用 Router 统一只挂载 OpenAPI `paths` 的无版本路由 `/{path...}`，不得挂载 `/v2/*`；受控反向代理以公共 `/v1`、`/v2` 首段选择后端并在转发前剥离首段，HTTP 与 WebSocket Upgrade 使用同一边界；
+- 配置必须分离内部 bind 地址、规范公共 API HTTPS Origin/Base Path（固定 `/v2`）和规范前端 Origin/固定完成页；启动时校验组合，API Resource `Location`、Provider Callback、Cookie Path、Signaling channel、303 前端 Location 与 Device Verification URI 只从这些受信配置生成，不从 Host/Forwarded Header 推导；
 - PostgreSQL 是领域生命周期、协议 Phase、幂等、Audit、Outbox、配额和最小 Receipt 的权威；
 - LeaseStore/EventBus 使用独立 Redis 部署和 `nli:v2:{environment}:*` 前缀；敏感易失实例整体禁 RDB/AOF、Swap、通用备份和跨环境复制，不能假装按 Namespace 禁持久化；
 - EventBus 只负责提示，不参与授权或 Signaling Payload 投递许可；
@@ -75,7 +101,7 @@
 
 建立 checked-in `src/v2/http/operation_policy.rs`，逐 Operation 固定：
 
-- method/path/operationId；
+- method/path/operationId；其中 path 是应用内无版本前缀的 OpenAPI path，不包含代理拥有的 `/v2`；
 - Principal、Audience、Purpose 和 recent-auth 要求；
 - 是否要求 `Idempotency-Key`；
 - 是否允许 Secret Replay；
@@ -104,11 +130,11 @@ Manifest 从冻结 OpenAPI/REST 生成或由测试核对。不得把以下策略
 - v2在`hangzhou-traffic`绿地部署，使用全新PostgreSQL Database、一个v2专用无持久Redis实例和独立v2服务进程；不与v1共享逻辑Database/Schema、Redis进程/数据、Credential、文件或写模型；
 - v1账号、好友、实例、邀请码、Join、信令和TURN数据均不导入、不映射、不继承；v2用户需要建立新的账号与关系；
 - 生产 Gate E/F 路由按文档要求成组开放，不能把缺失路由伪装为94项已完成；
-- 切流采用DNS/反向代理指向通过容量和故障验收的新环境；观测期保留上一个已验证v2二进制和v2数据库恢复点；
+- 切流采用DNS/反向代理指向通过容量和故障验收的新环境；公共 `/v1/{path...}` 与 `/v2/{path...}` 必须选择不同后端并各自剥离版本首段，v2 后端只接收 `/{path...}`；观测期保留上一个已验证v2二进制和v2数据库恢复点；
 - v2接受第一笔生产写入前可以撤销切流；接受生产写入后不得回到v1而造成双写或丢弃v2事实，只能关闭功能、回退到兼容当前v2 Schema的前一v2版本或forward-fix；
 - 无论v1当前是否也位于`hangzhou-traffic`，切流时v1都进入只读/维护状态且不成为v2故障转移；Phase 0实机清点其主机和依赖。若同机，v2可为节省资源共用PostgreSQL server process，但必须使用独立Database/owner/application role/备份；v2 Redis必须是独立无持久实例；
 - v1只读服务最长保留到v2全量切流后14天，随后停止进程；v1历史仅按既定离线保留策略保存，不导入v2；
-- v1代码、测试和部署样例只在v2全量观测期通过后删除；
+- v1代码、测试、旧Migration、配置和部署样例已按D-330在Phase 0从active tree删除；全量观测期后的Phase 10只负责已部署v1进程、公共路由、Credential和离线数据保留/下线，不再等待删除仓库源文件；
 - v2生产数据库每日执行一次加密custom-format逻辑备份，并在每次Migration前额外创建恢复点；备份必须传输到异机存储，保留14份每日和8份每周副本，每月至少完成一次隔离环境真实恢复演练。初始RPO目标24小时、RTO目标4小时，实测不满足时阻断Traffic Gate。
 
 ### 4.7 `hangzhou-traffic` 原生部署与容量边界
@@ -135,7 +161,7 @@ Manifest 从冻结 OpenAPI/REST 生成或由测试核对。不得把以下策略
 - unit使用`Wants/After=network-online.target`，并在Phase 0按实机unit名称加入PostgreSQL和`nli-v2` Redis的`After=`；具体指令需在目标发行版执行`systemd-analyze verify`和`systemd-analyze security`验证兼容性；
 - 发布顺序固定为：本地Gate→构建Manifest/SHA-256→上传临时路径→远端校验Manifest→创建并验证可读的异机v2数据库恢复点→Migration→原子切换软链接→`systemctl restart`→readiness/metrics/日志检查；任何contract阶段Migration必须先在隔离环境实际恢复该恢复点，失败则不得切换；
 - 发布失败时只可切回兼容当前Schema的前一v2 release并重启；Migration不做down，必要时从本次恢复点恢复v2数据库后再forward-fix；
-- `deploy/systemd/`和`scripts/release-wsl.sh`只保存无Secret模板/步骤。部署脚本在切换前必须校验`release-manifest.json`存在且内容匹配；不得把手动操作理解为可以跳过清单、校验和或验收记录。
+- `deploy/systemd/`、v2 Nginx 模板和`scripts/release-wsl.sh`只保存无Secret模板/步骤。v2 Nginx 必须对 HTTP/WS 精确匹配公共 `/v2/`、剥离一次首段后转发到无版本应用路由，保留 Query、Method、`Authorization` 和必要 WebSocket Upgrade Header，并拒绝重复/畸形前缀；现有 v1 透传模板不能直接复制为 v2 配置。部署脚本在切换前必须校验`release-manifest.json`存在且内容匹配；不得把手动操作理解为可以跳过清单、校验和或验收记录。
 
 ## 5. 目标代码结构
 
@@ -178,20 +204,23 @@ scripts/
 
 ## 6. 分阶段交付计划
 
+实现进度统一写入 [`implementation_progress.md`](implementation_progress.md) 和当前 `progress/phase-N.md`。每个切片开始前记录 `IN_PROGRESS`、稳定导航键、非目标和验收；结束前记录实际命令、结果、变更文件、残余风险及 commit/PR，并同步下一动作。未满足本 Phase 完成定义或缺少可复现证据时不得标记 `COMPLETE`。聊天记录、Agent TODO 和已删除的临时设计监督记录均不能替代仓库进度记录。
+
 ### Phase 0：基线、WSL发布门禁与可选CI
 
 **目标**：先建立“什么算实现完成”的机械证明，不改变生产行为。
 
 **任务**：
 
-1. 将实现准备提交和`v2-design-gate-f`推送到`origin`；从包含全部准备决策的最新`master`创建`v2/phase-0-contract`分支/独立worktree并记录`git rev-parse`，契约漂移仍比较`3b4f329`；
+1. 将核心 `v2-design-gate-f` 与包含 D-329/D-330、进度入口的最新 doc-only 提交推送到 `origin/master`，为后者创建并推送 annotated tag `v2-design-gate-f-routing`；以该提交为 Phase 0 分支基点，在 `v2/phase-0-contract` 使用独立提交删除 D-330 指定的全部 v1 工程资产并推送，记录两个 commit 的 `git rev-parse`；
 2. 以独立提交确认`Cargo.toml`/`Cargo.lock`中的应用版本`0.2.0`，不与功能提交混合；
-3. 提交`rust-toolchain.toml`并增加WSL Gate脚本；使用WSL原生PostgreSQL和v2专用无持久Redis运行依赖测试，不使用容器；可选CI先执行不依赖服务的格式、Clippy、单元和契约检查；
+3. 在 clean-slate tree 建立不含业务路由的最小 v2 Cargo target，清除旧实现遗留且未经当前切片批准的依赖；提交`rust-toolchain.toml`并增加WSL Gate脚本；使用WSL原生PostgreSQL和v2专用无持久Redis运行依赖测试，不使用容器；可选CI先执行不依赖服务的格式、Clippy、单元和契约检查；验证项目 trust 后 `.pi/APPEND_SYSTEM.md` 会加载，且重启或 `/reload` 后入口更新生效；
 4. 增加 OpenAPI lint、全部本地 `$ref`、81/94、operationId 唯一和 JSON Schema 正反例检查；
-5. 以 `3b4f329:doc/v2/openapi.yaml` 或其固定 SHA-256 做 drift 基线；普通 PR 不允许更新基线；
+5. 以 `v2-design-gate-f-routing:doc/v2/openapi.yaml` 或其固定 SHA-256 做完整 drift 基线；普通 PR 不允许更新基线；旧 `3b4f329` 仅用于证明 D-329 之前的 Gate F 核心未被反改；
 6. 建立两类清单：
    - `frozen_inventory` 始终为94项；
-   - `mounted_route_manifest` 只包含当前真实装配路由，并按阶段允许子集校验；
+   - `mounted_route_manifest` 只包含当前真实装配的无版本应用路由，并按阶段允许子集校验；
+   - 两者直接使用 OpenAPI 无前缀 `paths`；另以代理黑盒清单验证公共 `/v2` 映射和前缀剥离，不把 `/v2` 写进应用 manifest；
 7. 建立依赖集成测试脚本，禁止以全部 `#[ignore]` 的旧测试作为发布证据；
 8. 实机清点`hangzhou-traffic`的架构、发行版/glibc、systemd与依赖unit名称、v1是否同机、磁盘/内存/网络基线；不读取或提交现有Secret；
 9. 建立`release-manifest.json`生成/远端校验、Migration前异机备份和原子软链接切换脚本的无Secret骨架。
@@ -208,7 +237,7 @@ npx --no-install redocly lint doc/v2/openapi.yaml
 
 Phase 0提交锁定Redocly版本的`package.json`/`package-lock.json`，禁止Gate联网浮动选择版本。WSL Gate必须验证PostgreSQL/Redis服务测试实际执行且非ignored，并输出执行数和Release Manifest。CI不是必备发布依赖；一旦配置，CI失败同样阻断合并，但不能替代WSL依赖验收。
 
-**完成定义**：WSL Gate可重复运行；冻结inventory为94，mounted manifest可为空但不能伪报已实现。
+**完成定义**：active tree 无 D-330 指定的 v1 资产；最小 v2 Cargo target 恢复可构建；WSL Gate可重复运行；冻结inventory为94，mounted manifest可为空但不能伪报已实现；进程内测试证明应用只接受无版本路由，代理黑盒测试证明公共 `/v2` 正确剥离且 `/v2/v2`、错误版本和绕过路径被拒绝。
 
 **回滚**：仅工具和测试，可独立 revert。
 
@@ -437,7 +466,7 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 1. **Hidden Relay Gate**：代码和内部Adapter部署但Relay关闭；
 2. **Client Gate**：参考客户端与真实验收通过；
 3. **Traffic Gate**：在新服务器完成独立PostgreSQL/Redis备份恢复、容量和混合负载演练后，内部canary→小比例新客户端→全量DNS/代理切流并完成观测期；
-4. **Removal Gate**：最后删除v1代码、旧migration装配、旧测试和coturn/nginx v1模板，并按保留策略下线旧服务器。
+4. **Removal Gate**：仓库 v1 资产已由 D-330 提前删除；本 Gate 最后移除已部署 v1 进程、公共 `/v1` 路由和 Credential，并按保留策略处理旧服务器与离线历史数据。
 
 **切流前**：明确公告v2为空数据新系统、账号和关系需重新建立；记录DNS TTL、代理配置、新环境容量基线、前一兼容v2二进制和v2恢复点。旧服务器保持独立，不复制v1业务数据到新环境。
 
@@ -445,7 +474,7 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 **切流后恢复**：优先关闭Relay、Signaling或受影响路由组；回退到兼容当前v2 Schema的前一v2版本；必要时恢复v2数据库并forward-fix。
 
-**最终完成定义**：94项契约、Worker、多节点、Relay和客户端证据齐全；v1删除提交独立可审计；生产Relay仅在人工审批后开启。
+**最终完成定义**：94项契约、Worker、多节点、Relay和客户端证据齐全；D-330 clean-slate 提交与生产 v1 下线证据均独立可审计；生产Relay仅在人工审批后开启。
 
 ## 7. 测试矩阵
 
@@ -454,9 +483,9 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 | Domain单元 | closed enum/DTO、UnixMillis、状态转换、ACL、Phase/epoch、摘要和Redaction |
 | PostgreSQL | 空库Migration、FK/unique/check/index、锁序、并发唯一赢家、TTL和清理链 |
 | LeaseStore | 原子CAS、Route Document、双角色check-both、TTL、重启、分区和旧fence |
-| HTTP | 当前阶段mounted manifest、状态/Header/Body、Problem、幂等、404防枚举 |
+| HTTP | 当前阶段无版本 mounted manifest、状态/Header/Body、Problem、幂等、404防枚举；代理公共 `/v2` 前缀剥离和绕过拒绝；Host/Forwarded 污染不能改变 Callback/Cookie/Location/channel/Verification URL |
 | Principal | 94项Audience/Purpose/Family/Instance/Guest/recent-auth/错误绑定负向矩阵 |
-| WS | Ping/Lease、replace、epoch、ACK、背压、跨节点、恢复、撤销尾部 |
+| WS | Ping/Lease、replace、epoch、ACK、背压、跨节点、恢复、撤销尾部；公共 `/v2` Upgrade 经代理剥离到无版本应用路由 |
 | Worker | Outbox恢复、Audit补写、有界批次、SKIP LOCKED、幂等删除、父子顺序 |
 | Security | 明文扫描、日志注入、Secret轮换/缺Key、SSRF/egress、备份/Swap/Dump |
 | Relay | 真实WebRTC/TURN、Permit、Pin、Quota、崩溃和故障；Mock不算生产证据 |
@@ -472,29 +501,31 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 2. WSL实际启动原生PostgreSQL和v2专用无持久Redis并运行非ignored集成测试；
 3. OpenAPI 3.1、全部local ref、固定81/94、唯一lowerCamelCase operationId；
 4. 当前mounted route与阶段允许Operation集合双向差集；
-5. 对`3b4f329:doc/v2/openapi.yaml`执行breaking drift检查；
+5. 对 `v2-design-gate-f-routing:doc/v2/openapi.yaml` 执行 breaking drift 检查，并确认相对 `3b4f329` 只包含已批准的 D-329 路由边界元数据/说明；
 6. JSON Schema/AJV正反例和已装配Operation的黑盒契约测试；
 7. Migration空库/checksum/最小权限检查；
-8. Secret/SDP/ICE/IP禁区静态与运行产物扫描。
+8. Secret/SDP/ICE/IP禁区静态与运行产物扫描；
+9. `implementation_progress.md`、当前 Phase 账本、Git HEAD/工作区、mounted manifest 和实际测试证据状态一致；
+10. 受信任的交互启动和显式 `--approve` 非交互检查能加载 `.pi/APPEND_SYSTEM.md`；`--no-approve` 不加载的行为已记录且不被误判为进度丢失。
 
 冻结文档变化应直接使WSL Gate和可选CI失败，并要求显式Gate重开记录，而不是自动接受新基线。手工上传不允许绕过Release Gate记录。
 
 ## 9. 分支与提交策略
 
-- 契约漂移比较基线保持在`3b4f329`和tag `v2-design-gate-f`，并将基线提交及annotated tag推送到`origin`；
-- 实现分支从包含全部实现准备决策的最新`master`创建，不从`3b4f329`直接创建；第一条分支为`v2/phase-0-contract`，后续使用`v2/phase-1-platform`等短分支；
+- 核心 Gate F 保持 `3b4f329` / `v2-design-gate-f` 不变；D-329 文档提交使用追加 tag `v2-design-gate-f-routing` 作为完整实现 drift 基线，两个 annotated tag 都推送到 `origin`；
+- 实现分支从包含 D-329 和全部实现准备决策的最新 `master` 创建，不从 `3b4f329` 直接创建；第一条分支为`v2/phase-0-contract`，后续使用`v2/phase-1-platform`等短分支；
 - 每个提交只含一种职责：Migration、Domain/port、Adapter、HTTP/WS、Worker、测试、部署或开关；
 - v2应用版本固定为`0.2.0`，Cargo版本号以独立的实现准备提交纳入，不与功能修改混合；
 - 每阶段先合并不可见基础，再合并默认关闭的路由，最后单独提交开关；
 - Schema的expand/backfill/switch/contract分开；
-- v1删除最后单独提交；
+- D-330 的仓库 v1 资产清理在 Phase 0 使用独立提交；生产 v1 下线仍在 Phase 10 单独记录；
 - 不重写或amend设计基线提交。
 
 ## 10. 首批可交付切片
 
 首批实现只覆盖Phase 0和Phase 1，不开放任何业务路由：
 
-1. 从最新实现准备提交建立独立worktree/分支、WSL Gate脚本和可选静态CI；
+1. 从最新实现准备提交建立独立worktree/分支、WSL Gate脚本和可选静态CI；先在 `implementation_progress.md` / `progress/phase-0.md` 记录正式 commit、baseline tag 和 OpenAPI digest；
 2. 固定OpenAPI inventory、阶段mounted manifest和drift门禁；
 3. v2目录、Problem/Principal/Operation Policy骨架；
 4. 独立v2 Database marker与`nli-migrate`；
@@ -524,7 +555,7 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 制定计划时已执行：
 
-- `cargo test --all-targets`：46个现有单元测试通过，11个依赖型旧集成测试仍为ignored；这些只证明v1基线可构建，不证明v2；
+- D-330 清理前，`cargo test --all-targets` 曾有46个旧单元测试通过、11个依赖型旧集成测试为ignored；该历史证据只存在于清理前 commit，不证明v2，清理后不再作为当前工作区测试；
 - `cargo fmt --all -- --check`：通过；
 - `cargo clippy --all-targets --all-features -- -D warnings`：通过；
 - Gate F文档/OpenAPI机械校验已在设计基线前通过。

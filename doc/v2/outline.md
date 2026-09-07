@@ -1,6 +1,6 @@
 # NetherLink v2 API
 
-> Gate F 已通过。Gate E 的 77 Paths / 89 Operations 保持冻结；Phase 9 仅追加 4 Paths / 5 Operations，形成 81 Paths / 94 Operations 的最终设计基线。P2P 信令、NAT 与 TURN 的权威设计见 `signaling.md`，不得反向改变已冻结授权语义。
+> Gate F 已通过。Gate E 的 77 Paths / 89 Operations 保持冻结；Phase 9 仅追加 4 Paths / 5 Operations，形成 81 Paths / 94 Operations 的最终设计基线。D-329 只追加“公共版本前缀由代理拥有、应用路由无前缀”的路由边界，不改变 81/94 表面。P2P 信令、NAT 与 TURN 的权威设计见 `signaling.md`，不得反向改变已冻结授权语义。
 
 NetherLink v2 API（NLI v2 API）将完全抛弃现有实现，新建独立归属 NetherLink 的账号、好友与联机系统。
 
@@ -11,6 +11,7 @@ NetherLink v2 API（NLI v2 API）将完全抛弃现有实现，新建独立归�
 - 外部 Provider 的好友关系只能作为好友数据来源以及发起 NLI 好友申请的依据，不能直接授予 NLI 联机权限；
 - 临时凭据、实例、邀请码和加入请求必须具有过期与撤销机制；
 - 客户端提交的 Provider、好友来源和 NLI 权限信息都必须由后端重新鉴别；
+- 客户端公共 API 使用 `/v2/{path...}`，由反向代理选择版本后剥离 `/v2`；v2 应用进程、Router 与 Operation Manifest 只使用无版本前缀的 `/{path...}`，不得重复挂载 `/v2`；
 - 联机时使用的 MC Profile 由源 Game Instance 自行声明和传递，NLI 只验证 NLI 账号、Session 与实例身份，不为 MC Profile 的真实性背书；本机恶意客户端可以滥用自己的 NLI Auth，且真实 Profile 也不能证明行为可信，因此 Profile 只用于展示和显式弱 ACL 匹配；
 - 联机后的恶意行为通过举报通道处理，客户端 MOD 可以进行本地二次校验，但其结果不升级为 NLI 后端身份保证。
 
@@ -478,10 +479,14 @@ TURN 允许在 60 秒创建窗口内激活新 Allocation，窗口结束后只允
 
 本大纲已由以下冻结文档细化；实现必须遵循其约束：
 
+- Pi 项目级系统入口（[`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md) 只追加入口和工作口径，不替换默认提示词、不覆盖规范）；
+- 最小上下文导航与按任务索引（先读 [`index.md`](index.md)，它只导航、不覆盖规范）；
+- 可变实现进度、当前交接和 Phase 账本（见 [`implementation_progress.md`](implementation_progress.md)，它只记录执行事实、不覆盖规范）；
 - NLI Account、认证、会话与恢复；
 - Provider 适配器与账号绑定；
 - 好友关系、查询与同步；
 - Game Instance、邀请码与加入流程；
 - HTTP API 与统一错误模型；
 - WebSocket 通知协议；
-- 联机信令、NAT 穿透与 TURN（Phase 9 / Gate F 已冻结，见 `signaling.md`）。
+- 联机信令、NAT 穿透与 TURN（Phase 9 / Gate F 已冻结，见 `signaling.md`）；
+- 实现顺序、生产门槛和冻结验证基线（当前暂停，见 `implementation_plan.md`）。
