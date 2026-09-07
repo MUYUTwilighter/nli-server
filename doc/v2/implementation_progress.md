@@ -1,16 +1,19 @@
 ---
 schemaVersion: 1
-updatedAt: 2026-09-07T06:57:24Z
+updatedAt: 2026-09-07T07:02:49Z
 implementationStatus: IN_PROGRESS
 currentPhase: 0
 currentPhaseStatus: IN_PROGRESS
-currentSlice: P0-01
-currentSliceStatus: IN_PROGRESS
+currentSlice: P0-03
+currentSliceStatus: READY
 expectedBranch: v2/phase-0-contract
-lastEvidenceCommit: ae96560
-worktreeState: UNCOMMITTED_IN_PROGRESS
-baselineTagRequired: v2-design-gate-f-routing
-baselineTagStatus: NOT_CREATED
+lastEvidenceCommit: 49a78b7
+worktreeState: CLEAN_AFTER_PROGRESS_COMMIT
+baselineCommit: d99ebb4
+baselineTag: v2-design-gate-f-routing
+baselineTagObject: f8b53d8
+baselineTagStatus: PUSHED
+openapiSha256: bea05474c9502318407ec6b8a62ba675807ed2d8cb9a268c12b8e47669d521ed
 ---
 
 # NetherLink v2 实现进度仪表盘
@@ -41,21 +44,21 @@ baselineTagStatus: NOT_CREATED
 | 实现状态 | `IN_PROGRESS`：仅推进 Phase 0 clean-slate baseline，不开放业务路由 |
 | 当前 Phase | `Phase 0：基线、WSL 发布门禁与可选 CI` |
 | 当前 Phase 账本 | [`progress/phase-0.md`](progress/phase-0.md) |
-| 当前切片 | `P0-01：冻结 D-329/进度入口并建立无 v1 工程资产的 clean-slate baseline` |
-| 切片状态 | `IN_PROGRESS`：用户已授权删除与完整 Git push |
-| 下一动作 | 先提交并推送 `master` 的 doc-only baseline、创建 `v2-design-gate-f-routing`；随后在 `v2/phase-0-contract` 删除已确认的全部 v1 工程资产，独立提交并推送；不编写 v2 业务 Router |
+| 当前切片 | `P0-03：建立最小 v2 Cargo target、锁定工具链与 WSL Gate` |
+| 切片状态 | `READY` |
+| 下一动作 | 按 Phase 0 Task 3 建立不含业务路由的最小 v2 编译骨架，清理旧依赖并固定 toolchain/Gate；本轮不继续实现该切片 |
 | 最近已验证 | OpenAPI 81 Paths / 94 Operations / 1422 local `$ref`；无版本 OpenAPI paths；Redocly 有效并保留 8 个已解释 Warning；Markdown 链接和 `git diff --check` 通过 |
-| 当前风险 | 工作区文档修改尚未提交；完整 drift baseline tag 尚未创建；清理后保留的 Cargo manifest 暂时指向不存在的 target，直到后续 P0-03 建立最小 v2 编译骨架 |
+| 当前风险 | 保留的 `Cargo.toml` / `Cargo.lock` 暂时指向已删除 target 且含旧依赖；这是 P0-03 的显式前置状态，当前 Cargo build/test 预期不可用，不得误记为回归或通过 |
 
 ### 当前切片最小上下文
 
-- [`implementation_plan.md`](implementation_plan.md)：“Phase 0：基线、WSL发布门禁与可选CI”；
-- [`common.md`](common.md)：“API 版本”；
-- [`index.md`](index.md)：“OpenAPI 不整文件加载”；
-- [`openapi.yaml`](openapi.yaml)：`info.x-routing-boundary`、`servers`、一个代表性 `path`；
-- [`progress/phase-0.md`](progress/phase-0.md)：`P0-01` 行和当前交接。
+- [`implementation_plan.md`](implementation_plan.md)：“Phase 0：基线、WSL发布门禁与可选CI”“目标代码结构”；
+- [`index.md`](index.md)：“Phase 0：基线、门禁和发布骨架”；
+- [`progress/phase-0.md`](progress/phase-0.md)：`P0-03` 行和当前交接；
+- `Cargo.toml` / `Cargo.lock`：只检查当前 package metadata、target 声明和待清理依赖；
+- [`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md)：入口验收边界。
 
-明确非目标：当前切片不编写 v2 Router、Nginx、数据库或业务代码；保留本地 `.env` 与 `target/`，不提交或读取其中 Secret/产物。
+明确非目标：`P0-03` 不开放业务路由，不实现数据库、认证或信令；本地 `.env` 与 `target/` 不提交或读取其中 Secret/产物。
 
 ## Phase 总览
 
@@ -63,7 +66,7 @@ baselineTagStatus: NOT_CREATED
 
 | Phase | 状态 | 当前/最后切片 | 账本 | 完成证据摘要 |
 | --- | --- | --- | --- | --- |
-| 0 基线与门禁 | `IN_PROGRESS` | `P0-01`；`P0-02` 已完成 | [`progress/phase-0.md`](progress/phase-0.md) | doc-only baseline/tag + v1 工程资产清理正在执行 |
+| 0 基线与门禁 | `IN_PROGRESS` | `P0-03` READY；`P0-01`、`P0-02` COMPLETE | [`progress/phase-0.md`](progress/phase-0.md) | baseline/tag 已推送；v1 工程资产已从 active tree 清除 |
 | 1 平台与 Migration Journal | `NOT_STARTED` | — | 激活时创建 `progress/phase-1.md` | — |
 | 2 Account/Auth | `NOT_STARTED` | — | 激活时创建 `progress/phase-2.md` | — |
 | 3 Provider/Friendship/Sync | `NOT_STARTED` | — | 激活时创建 `progress/phase-3.md` | — |
@@ -81,7 +84,6 @@ Phase 不得仅因代码已写完就标记 `COMPLETE`；必须满足 `implementa
 
 | ID | 范围 | 状态 | 解除条件 | 影响 |
 | --- | --- | --- | --- | --- |
-| `P0-BASELINE` | 全部实现 | `IN_PROGRESS` | 正式文档提交后创建并推送 `v2-design-gate-f-routing`，再推送 clean-slate Phase 0 分支，记录 commit SHA 与 OpenAPI SHA-256 | 完成前不得开始后续 v2 编码 |
 | `B-09-TURN` | 生产 Relay | `BLOCKED` | 真实 TURN Adapter、Runtime Permit、Peer Pin、byte-credit、WebRTC、配额、故障和隐私验收，加人工审批 | 仅阻止生产 `NLI_RELAY_ENABLED=true`；不阻止前置实现 |
 
 生产 `NLI_RELAY_ENABLED` 必须保持 `false`，直到 `B-09-TURN` 解除。
@@ -92,11 +94,12 @@ Phase 不得仅因代码已写完就标记 `COMPLETE`；必须满足 `implementa
 
 | 时间（UTC） | 里程碑 | 状态 | 证据 |
 | --- | --- | --- | --- |
-| 2026-09-07 | 建立 Pi 项目级每轮系统提示词入口 | `VALIDATED_UNCOMMITTED` | [`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md) 追加默认提示词并统一导航/进度口径 |
+| 2026-09-07 | P0-01 clean-slate baseline | `COMPLETE` | doc baseline `d99ebb4` 已推送到 `master`；tag `v2-design-gate-f-routing` 已推送；v1 资产清理 commit `49a78b7` 已推送到 Phase 0 分支 |
+| 2026-09-07 | 建立 Pi 项目级每轮系统提示词入口 | `COMPLETE` | [`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md) 已包含于 `d99ebb4` 并推送 |
 | 2026-09-07 | 有限上下文 Reader Test | `APPROVE` | Fresh reviewer 能回答状态、切片、下一动作、阻塞、最小读取、更新协议和完成证据；3 个 warning 已修正 |
-| 2026-09-07 | 创建有限上下文实现进度体系 | `VALIDATED_UNCOMMITTED` | 本文件、[`progress/phase-0.md`](progress/phase-0.md)、导航与计划链接 |
+| 2026-09-07 | 创建有限上下文实现进度体系 | `COMPLETE` | 本文件、[`progress/phase-0.md`](progress/phase-0.md)、导航与计划已包含于 `d99ebb4` |
 | 2026-09-07 | 核实应用版本 `0.2.0` 已由独立提交完成 | `COMPLETE` | commit `b30b536` 是当前 HEAD 祖先；`Cargo.toml` / `Cargo.lock` 已更新 |
-| 2026-09-07 | D-329 代理/应用路由边界文档化并机械验证 | `VALIDATED_UNCOMMITTED` | `common.md`、`rest_api.md`、OpenAPI 2.1.1；81/94/1422、Redocly、链接、diff 检查 |
+| 2026-09-07 | D-329 代理/应用路由边界文档化并机械验证 | `COMPLETE` | baseline `d99ebb4` / OpenAPI 2.1.1；81/94/1422、Redocly、链接、diff 检查 |
 | 2026-08-31 | Gate F 最终设计冻结 | `COMPLETE` | commit `3b4f329`、tag `v2-design-gate-f`；Gate E 77/89，Gate F 81/94 |
 
 ## 每次实现切片的更新规则
