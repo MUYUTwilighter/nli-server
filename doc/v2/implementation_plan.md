@@ -493,6 +493,31 @@ Relay关闭时ICE Operation仍按冻结契约响应：有效策略为ALL时可�
 
 每个依赖测试使用独立Database或Schema、唯一Redis Prefix；并发/多节点测试不得只用单进程Mock。
 
+### 7.1 跨Phase全流程验收清单
+
+以下18项从已退役的临时设计监督文件迁入实现计划。它们表示**尚未完成的实现验收**，不能因设计冻结而标为通过；对应Phase只有在记录可复现的端到端证据后才能更新状态。
+
+| ID | 目标Phase | 场景 | 状态 |
+|---|---:|---|---|
+| E2E-01 | 2 | 纯邮箱用户登录网页并通过Device Code登录Mod | `NOT_STARTED` |
+| E2E-02 | 2–3 | 纯Provider注册用户通过邮箱重置密码恢复账号 | `NOT_STARTED` |
+| E2E-03 | 3 | Provider临时宕机但NLI原生功能正常 | `NOT_STARTED` |
+| E2E-04 | 3 | Provider授权失效并进入`REAUTH_REQUIRED` | `NOT_STARTED` |
+| E2E-05 | 3 | Provider重新验证成功 | `NOT_STARTED` |
+| E2E-06 | 3 | Provider好友同步为NLI好友申请 | `NOT_STARTED` |
+| E2E-07 | 3 | 对方开启自动同步并自动接受 | `NOT_STARTED` |
+| E2E-08 | 3 | 有向ban阻止自动同步 | `NOT_STARTED` |
+| E2E-09 | 3 | 用户重新添加时主动解除自己的ban | `NOT_STARTED` |
+| E2E-10 | 4 | 好友使用代理发布授权码发布实例 | `NOT_STARTED` |
+| E2E-11 | 4 | 代理授权过期后实例停止代理展示 | `NOT_STARTED` |
+| E2E-12 | 4 | NLI好友通过好友列表加入 | `NOT_STARTED` |
+| E2E-13 | 4 | NLI非好友通过邀请码加入 | `NOT_STARTED` |
+| E2E-14 | 4 | 匿名用户通过邀请码加入 | `NOT_STARTED` |
+| E2E-15 | 4 | 目标实例收到请求者类型、公开信息、`CLIENT_CLAIMED` MC Profile、Identity Traits和Source | `NOT_STARTED` |
+| E2E-16 | 4 | 实例退出世界并批量拒绝旧请求 | `NOT_STARTED` |
+| E2E-17 | 4 | 客户端崩溃后WS Session到期，实例自动下线 | `NOT_STARTED` |
+| E2E-18 | 4 | WebSocket通知丢失后通过HTTP恢复状态 | `NOT_STARTED` |
+
 ## 8. WSL Release Gate、可选CI与契约漂移门禁
 
 每个PR由可选CI执行无外部依赖的静态检查；每个合并/Release Candidate必须附带一次本地WSL Gate记录，至少包括：
