@@ -1,13 +1,13 @@
 ---
 schemaVersion: 1
-updatedAt: 2026-09-07T07:02:49Z
+updatedAt: 2026-09-07T07:43:41Z
 implementationStatus: IN_PROGRESS
 currentPhase: 0
 currentPhaseStatus: IN_PROGRESS
-currentSlice: P0-03
+currentSlice: P0-04
 currentSliceStatus: READY
 expectedBranch: v2/phase-0-contract
-lastEvidenceCommit: 49a78b7
+lastEvidenceCommit: 0dfaa42
 worktreeState: CLEAN_AFTER_PROGRESS_COMMIT
 baselineCommit: d99ebb4
 baselineTag: v2-design-gate-f-routing
@@ -44,11 +44,11 @@ openapiSha256: bea05474c9502318407ec6b8a62ba675807ed2d8cb9a268c12b8e47669d521ed
 | 实现状态 | `IN_PROGRESS`：仅推进 Phase 0 clean-slate baseline，不开放业务路由 |
 | 当前 Phase | `Phase 0：基线、WSL 发布门禁与可选 CI` |
 | 当前 Phase 账本 | [`progress/phase-0.md`](progress/phase-0.md) |
-| 当前切片 | `P0-03：建立最小 v2 Cargo target、锁定工具链与 WSL Gate` |
+| 当前切片 | `P0-04：锁定OpenAPI工具并建立契约门禁` |
 | 切片状态 | `READY` |
-| 下一动作 | 按 Phase 0 Task 3 建立不含业务路由的最小 v2 编译骨架，清理旧依赖并固定 toolchain/Gate；本轮不继续实现该切片 |
-| 最近已验证 | OpenAPI 81 Paths / 94 Operations / 1422 local `$ref`；无版本 OpenAPI paths；Redocly 有效并保留 8 个已解释 Warning；Markdown 链接和 `git diff --check` 通过 |
-| 当前风险 | 保留的 `Cargo.toml` / `Cargo.lock` 暂时指向已删除 target 且含旧依赖；这是 P0-03 的显式前置状态，当前 Cargo build/test 预期不可用，不得误记为回归或通过 |
+| 下一动作 | 固定Redocly/npm lock，建立OpenAPI lint、81/94、1422 local `$ref`、operationId、JSON Schema和routing baseline drift门禁 |
+| 最近已验证 | P0-03在Rust 1.94.0通过Windows build/fmt/Clippy/2项bootstrap测试；WSL原生checkout通过PostgreSQL 14、无持久Redis 6和2项非ignored依赖测试；DrvFS与非法service name拒绝通过 |
+| 当前风险 | P0-04尚未把既有Redocly 2.51.2与81/94/1422检查固化为锁版本脚本；Phase 0 bootstrap恒失败退出，P0-07前禁止部署为systemd服务 |
 
 ### 当前切片最小上下文
 
@@ -66,7 +66,7 @@ openapiSha256: bea05474c9502318407ec6b8a62ba675807ed2d8cb9a268c12b8e47669d521ed
 
 | Phase | 状态 | 当前/最后切片 | 账本 | 完成证据摘要 |
 | --- | --- | --- | --- | --- |
-| 0 基线与门禁 | `IN_PROGRESS` | `P0-03` READY；`P0-01`、`P0-02` COMPLETE | [`progress/phase-0.md`](progress/phase-0.md) | baseline/tag 已推送；v1 工程资产已从 active tree 清除 |
+| 0 基线与门禁 | `IN_PROGRESS` | `P0-04` READY；`P0-01`～`P0-03` COMPLETE | [`progress/phase-0.md`](progress/phase-0.md) | baseline/tag 已推送；v1 工程资产已从 active tree 清除 |
 | 1 平台与 Migration Journal | `NOT_STARTED` | — | 激活时创建 `progress/phase-1.md` | — |
 | 2 Account/Auth | `NOT_STARTED` | — | 激活时创建 `progress/phase-2.md` | — |
 | 3 Provider/Friendship/Sync | `NOT_STARTED` | — | 激活时创建 `progress/phase-3.md` | — |
@@ -94,6 +94,8 @@ Phase 不得仅因代码已写完就标记 `COMPLETE`；必须满足 `implementa
 
 | 时间（UTC） | 里程碑 | 状态 | 证据 |
 | --- | --- | --- | --- |
+| 2026-09-07 | P0-03最小Cargo与WSL原生依赖Gate | `COMPLETE` | `2dc44bd` + executable fix `0dfaa42`；Rust 1.94.0；Windows 2项bootstrap、WSL 2项非ignored依赖测试通过；无业务路由 |
+| 2026-09-07 | 迁移跨Phase全流程清单 | `COMPLETE` | `5e265c2`将已删除临时文件中的E2E-01～E2E-18原样迁入实现计划并保持`NOT_STARTED` |
 | 2026-09-07 | P0-01 clean-slate baseline | `COMPLETE` | doc baseline `d99ebb4` 已推送到 `master`；tag `v2-design-gate-f-routing` 已推送；v1 资产清理 commit `49a78b7` 已推送到 Phase 0 分支 |
 | 2026-09-07 | 建立 Pi 项目级每轮系统提示词入口 | `COMPLETE` | [`.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md) 已包含于 `d99ebb4` 并推送 |
 | 2026-09-07 | 有限上下文 Reader Test | `APPROVE` | Fresh reviewer 能回答状态、切片、下一动作、阻塞、最小读取、更新协议和完成证据；3 个 warning 已修正 |
